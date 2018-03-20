@@ -13,7 +13,6 @@ find_package(catkin REQUIRED COMPONENTS
   image_transport
   message_filters
   message_generation
-  message_runtime
   roscpp
   sensor_msgs
   std_msgs
@@ -24,6 +23,7 @@ find_package(catkin REQUIRED COMPONENTS
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
 
+find_package( ZLIB REQUIRED )
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -114,6 +114,7 @@ catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES blimp-navigation
 #  CATKIN_DEPENDS cv_bridge geometry_msgs image_transport message_filters message_generation message_runtime roscpp sensor_msgs std_msgs tf tf_conversions
+  CATKIN_DEPENDS message_runtime
 #  DEPENDS system_lib
 )
 
@@ -126,12 +127,16 @@ catkin_package(
 include_directories(
 # include
   ${catkin_INCLUDE_DIRS}
+  ${OpenCV_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
-# add_library(${PROJECT_NAME}
-#   src/${PROJECT_NAME}/blimp-navigation.cpp
-# )
+add_library(${PROJECT_NAME}
+  src/BGSub.cpp
+  src/ferns.cc
+  src/fern_based_classifier.cc
+  src/TrackedObject.cpp
+)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
