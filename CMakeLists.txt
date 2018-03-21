@@ -19,11 +19,11 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   tf_conversions
 )
+find_package( ZLIB REQUIRED )
+find_package( OpenCV REQUIRED )
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
-
-find_package( ZLIB REQUIRED )
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -126,17 +126,18 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
 # include
-  ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
+  ${catkin_INCLUDE_DIRS}
 )
 
+
 ## Declare a C++ library
-add_library(${PROJECT_NAME}
-  src/BGSub.cpp
-  src/ferns.cc
-  src/fern_based_classifier.cc
-  src/TrackedObject.cpp
-)
+#add_library(${PROJECT_NAME}
+#  src/BGSub.cpp
+#  src/ferns.cc
+#  src/fern_based_classifier.cc
+#  src/TrackedObject.cpp
+#)
 
 ## Add cmake target dependencies of the library
 ## as an example, code may need to be generated before libraries
@@ -146,7 +147,7 @@ add_library(${PROJECT_NAME}
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-# add_executable(${PROJECT_NAME}_node src/blimp-navigation_node.cpp)
+add_executable(blimp_human_track_node src/BlimpHumanTracker.cpp src/BGSub.cpp src/ferns.cc src/fern_based_classifier.cc src/TrackedObject.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -159,9 +160,16 @@ add_library(${PROJECT_NAME}
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-# target_link_libraries(${PROJECT_NAME}_node
-#   ${catkin_LIBRARIES}
-# )
+#target_link_libraries(${PROJECT_NAME}
+#  ${OpenCV_LIBRARIES}
+#  ${ZLIB_LIBRARIES}
+#)
+
+target_link_libraries(blimp_human_track_node
+  ${OpenCV_LIBRARIES}
+  ${catkin_LIBRARIES}
+  ${ZLIB_LIBRARIES}
+)
 
 #############
 ## Install ##

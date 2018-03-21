@@ -127,10 +127,11 @@ bool BGSub::processImage (Mat &input_img) {
     if (contours_blimp.size()) {
         std::sort(contours_blimp.begin(), contours_blimp.end(), compareContourAreas);
         blimp_bb = groupBlimp(contours_blimp, 1.0);
-        if (blimp_bb.center != Point2f(0.,0.) || blimp_bb.size != Size2f(0.,0.) || blimp_bb.angle != 0.) {
+        blimp_center = blimp_bb.center;
+        /*if (blimp_bb.center != Point2f(0.,0.) || blimp_bb.size != Size2f(0.,0.) || blimp_bb.angle != 0.) {
             convexHull(contours_blimp[0],hull[0]);
             drawContours(mask_blimp, hull, 0, Scalar(255), CV_FILLED);
-        }
+        }*/
     }
     
     //fgMaskHOG2 = fgMaskHOG2 & ~mask_blimp;

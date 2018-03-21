@@ -60,6 +60,7 @@ protected:
     HOGDescriptor hog_original;
     vector<TrackedObject> tracked_objects;
     vector<TrackedObject> tracked_humans;
+    Point2f blimp_center;
     int hog_size;
     bool toDraw;
     
