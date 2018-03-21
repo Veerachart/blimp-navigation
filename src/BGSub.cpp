@@ -213,7 +213,7 @@ bool BGSub::processImage (Mat &input_img) {
 
 			        if (best_dist < 3*tracked_humans[best_track].getSdBody()) {
 				        // Update
-				        cout << "Update human with human:" << humans[hum].center << "," << humans[hum].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
+				        //cout << "Update human with human:" << humans[hum].center << "," << humans[hum].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
 				        tracked_humans[best_track].UpdateObject(humans[hum], true);
 				        usedHumanTrack[best_track] = true;
 				        continue;
@@ -238,7 +238,7 @@ bool BGSub::processImage (Mat &input_img) {
 
 			        if (best_dist < 3*tracked_objects[best_track].getSdBody()) {
 				        // Update
-				        cout << "Update object with human:" << humans[hum].center << "," << humans[hum].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
+				        //cout << "Update object with human:" << humans[hum].center << "," << humans[hum].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
 				        tracked_objects[best_track].UpdateObject(humans[hum], true);
 				        if(tracked_objects[best_track].getStatus() == HUMAN) {
 					        // Converted to human after update
@@ -247,7 +247,7 @@ bool BGSub::processImage (Mat &input_img) {
 					        tracked_objects.erase(tracked_objects.begin() + best_track);
 					        usedHumanTrack.push_back(true);		// Needed?
 					        usedTrack.erase(usedTrack.begin() + best_track);
-					        cout << "Upgrade object to human" << endl;
+					        //cout << "Upgrade object to human" << endl;
 					        continue;
 				        }
 				        else
@@ -255,14 +255,14 @@ bool BGSub::processImage (Mat &input_img) {
 			        }
 			        else {
 				        // Not within range for the existing object, create a new one
-				        cout << "Added new object, starting as human." << endl;
-				        tracked_objects.push_back(TrackedObject(humans[hum], true, false));
+				        //cout << "Added new object, starting as human." << endl;
+				        tracked_objects.push_back(TrackedObject(humans[hum], true, false, RotatedRect(), img_center));
 				        usedTrack.push_back(true);				// Needed?
 			        }
 		        }
 		        else {
-			        cout << "Added new object, starting as human." << endl;
-			        tracked_objects.push_back(TrackedObject(humans[hum], true, false));
+			        //cout << "Added new object, starting as human." << endl;
+			        tracked_objects.push_back(TrackedObject(humans[hum], true, false, RotatedRect(), img_center));
 			        usedTrack.push_back(true);				// Needed?
 		        }
         	}
@@ -286,7 +286,7 @@ bool BGSub::processImage (Mat &input_img) {
 
 				        if (best_dist < 3*tracked_humans[best_track].getSdBody()) {
 					        // Update
-					        cout << "Update human with object:" << objects[obj].center << "," << objects[obj].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
+					        //cout << "Update human with object:" << objects[obj].center << "," << objects[obj].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
 					        tracked_humans[best_track].UpdateObject(objects[obj], false);
 					        usedHumanTrack[best_track] = true;
 					        continue;
@@ -310,21 +310,21 @@ bool BGSub::processImage (Mat &input_img) {
 
 				        if (best_dist < 3*tracked_objects[best_track].getSdBody()) {
 					        // Update
-					        cout << "Update object with object:" << objects[obj].center << "," << objects[obj].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
+					        //cout << "Update object with object:" << objects[obj].center << "," << objects[obj].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
 					        tracked_objects[best_track].UpdateObject(objects[obj], false);
 					        usedTrack[best_track] = true;
 				        }
 				        else {
 					        // Not within range for the existing object, create a new one
-					        cout << "Added new object, not containing human." << endl;
-					        tracked_objects.push_back(TrackedObject(objects[obj], false, false));
+					        //cout << "Added new object, not containing human." << endl;
+					        tracked_objects.push_back(TrackedObject(objects[obj], false, false, RotatedRect(), img_center));
 					        usedTrack.push_back(true);		// Needed?
 				        }
 			        }
         			else {
 				        // New object
-				        cout << "Added new object, not containing human." << endl;
-				        tracked_objects.push_back(TrackedObject(objects[obj], false, false));
+				        //cout << "Added new object, not containing human." << endl;
+				        tracked_objects.push_back(TrackedObject(objects[obj], false, false, RotatedRect(), img_center));
 				        usedTrack.push_back(true);			// Needed?
 			        }
         		}
@@ -371,7 +371,7 @@ bool BGSub::processImage (Mat &input_img) {
 			        }
 			        if (best_dist < 3*tracked_humans[best_track].getSdHead()) {
 				        // Update
-				        cout << "Update head:" << heads[head].center << "," << heads[head].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
+				        //cout << "Update head:" << heads[head].center << "," << heads[head].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
 				        tracked_humans[best_track].UpdateHead(heads[head]);
 				        humanHasHead[best_track] = true;
 				        continue;
@@ -396,7 +396,7 @@ bool BGSub::processImage (Mat &input_img) {
 
 			        if (best_dist < 3*tracked_objects[best_track].getSdHead()) {
 				        // Update
-				        cout << "Update head:" << heads[head].center << "," << heads[head].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
+				        //cout << "Update head:" << heads[head].center << "," << heads[head].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
 				        tracked_objects[best_track].UpdateHead(heads[head]);
 				        objectHasHead[best_track] = true;
 				        continue;
@@ -435,10 +435,10 @@ bool BGSub::processImage (Mat &input_img) {
     vector<float> descriptor;
     int output_class, output_angle;
     vector<int> classes, angles;
-    cout << "Current objects:" << endl;
+    //cout << "Current objects:" << endl;
     // Final clean up for large variance objects
     for (vector<TrackedObject>::iterator it = tracked_objects.begin(); it != tracked_objects.end(); ) {
-        cout << "\t" << it->getBodyROI().center << "," << it->getBodyROI().size << endl;
+        //cout << "\t" << it->getBodyROI().center << "," << it->getBodyROI().size << endl;
         if (it->CheckAndDelete()) {
 	        it = tracked_objects.erase(it);
 	        cout << "An object removed" << endl;
@@ -446,9 +446,9 @@ bool BGSub::processImage (Mat &input_img) {
         else
 	        ++it;
     }
-    cout << "Current humans:" << endl;
+    //cout << "Current humans:" << endl;
     for (vector<TrackedObject>::iterator it = tracked_humans.begin(); it != tracked_humans.end(); ) {
-        cout << "\t" << it->getBodyROI().center << "," << it->getBodyROI().size << endl;
+        //cout << "\t" << it->getBodyROI().center << "," << it->getBodyROI().size << endl;
         if (it->CheckAndDelete()) {
 	        it = tracked_humans.erase(it);
 	        cout << "A human removed" << endl;

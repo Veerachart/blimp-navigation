@@ -16,7 +16,7 @@ enum objectStatus {
 
 class TrackedObject {
 public:
-	TrackedObject(RotatedRect objDetection, bool isHumanDetected, bool isHeadDetected, RotatedRect headDetection=RotatedRect());
+	TrackedObject(RotatedRect objDetection, bool isHumanDetected, bool isHeadDetected, RotatedRect headDetection, Point2f imgCenter);
 	Point2f PredictObject();
 	Point2f UpdateObject(RotatedRect objDetection, bool isHumanDetected);			// Return predicted position of the head area
 	//Point2f PredictHead(Mat &obj_vel);

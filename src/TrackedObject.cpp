@@ -4,7 +4,7 @@
 
 using namespace cv;
 
-TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, bool isHeadDetected, RotatedRect headDetection) {
+TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, bool isHeadDetected, RotatedRect headDetection, Point2f imgCenter) {
 	objectKF = KalmanFilter(4, 2, 0);
 	//headKF = KalmanFilter(3, 3, 3);
 	headKF = KalmanFilter(4, 2, 0);
@@ -62,8 +62,7 @@ TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, boo
 
 	headDirection = -1;			// Init
 
-	//img_center = Point2f(384.,384.);
-	img_center = Point2f(400.,300.);
+	img_center = imgCenter;
 }
 
 Point2f TrackedObject::PredictObject() {
