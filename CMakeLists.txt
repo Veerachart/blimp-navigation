@@ -149,6 +149,8 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(blimp_human_track_node src/BlimpHumanTracker.cpp src/BGSub.cpp src/ferns.cc src/fern_based_classifier.cc src/TrackedObject.cpp)
 
+add_executable(triangulate_blimp_node src/Triangulator.cpp)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -169,6 +171,11 @@ target_link_libraries(blimp_human_track_node
   ${OpenCV_LIBRARIES}
   ${catkin_LIBRARIES}
   ${ZLIB_LIBRARIES}
+)
+
+target_link_libraries(triangulate_blimp_node
+  ${OpenCV_LIBRARIES}
+  ${catkin_LIBRARIES}
 )
 
 #############
