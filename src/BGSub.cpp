@@ -6,6 +6,7 @@
 #include <iostream>
 #include "fern_based_classifier.h"
 #include "BGSub.h"
+#include <ros/package.h>
 
 using namespace cv;
 using namespace std;
@@ -64,7 +65,10 @@ BGSub::BGSub (bool _toDraw, bool _toSave) {
     pMOG2.set("fVarMax", 5*36.0);
     toDraw = _toDraw;
 
-    char classifier_name[] = "classifiers/classifier_acc_400-4";
+    string path = ros::package::getPath("blimp_navigation");
+    char classifier_name[128];
+    strcpy(classifier_name, path.c_str());
+    strcat(classifier_name, "/classifiers/classifier_acc_400-4");
 	classifier = new fern_based_classifier(classifier_name);
 
 	hog_size = classifier->hog_image_size;
@@ -110,15 +114,20 @@ bool BGSub::processImage (Mat &input_img) {
 
     pMOG2(input_img, fgMaskMOG2);
     threshold(fgMaskMOG2, fgMaskMOG2, 128, 255, THRESH_BINARY);
+    //imshow("FG Mask MOG2", fgMaskMOG2);
+    imshow("Blimp Mask", img_thresholded_b);
     //outputVideo << save;
     
     Mat intersect = img_thresholded_b & fgMaskMOG2;         // Blimp
     fgMaskMOG2 -= intersect;                                // Human
     
-    morphologyEx(intersect, intersect, MORPH_OPEN, Mat::ones(3,3,CV_8U));
-    morphologyEx(intersect, intersect, MORPH_CLOSE, Mat::ones(5,5,CV_8U));
+    //morphologyEx(intersect, intersect, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
+    morphologyEx(intersect, intersect, MORPH_CLOSE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
+    morphologyEx(intersect, intersect, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
+    morphologyEx(intersect, intersect, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
 
     vector<vector<Point> > contours_blimp;
+    imshow("Blimp", intersect);
     findContours(intersect, contours_blimp, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
     
     RotatedRect blimp_bb;
@@ -139,7 +148,9 @@ bool BGSub::processImage (Mat &input_img) {
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_CLOSE, Mat::ones(5,5,CV_8U), Point(-1,-1), 2);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
-    imshow("FG Mask MOG 2", fgMaskMOG2);
+    morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
+    
+    imshow("For human detect", fgMaskMOG2);
 
     vector<vector<Point> > contours_foreground;
     findContours(fgMaskMOG2.clone(), contours_foreground, CV_RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
@@ -708,6 +719,13 @@ bool BGSub::processImage (Mat &input_img) {
 		        for(int j = 0; j < 4; j++)
 			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(255,255,255),1,8);
 		        //circle(input_img, object.getPointHead(), 3*object.getSdHead(), Scalar(255,0,0), 1);
+	        }
+	        
+	        if (blimp_bb.center != Point2f(0.,0.) || blimp_bb.size != Size2f(0.,0.) || blimp_bb.angle != 0.) {
+	            Point2f rect_points[4];
+		        blimp_bb.points(rect_points);
+		        for(int j = 0; j < 4; j++)
+			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(255,0,0),2,8);
 	        }
 
 	        for (int track = 0; track < tracked_humans.size(); track++) {

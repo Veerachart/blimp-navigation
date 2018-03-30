@@ -12,6 +12,7 @@
 #include <geometry_msgs/Polygon.h>
 #include <geometry_msgs/PolygonStamped.h>
 #include <algorithm>
+#include <std_msgs/Bool.h>
 
 #include "TrackedObject.h"
 #include "BGSub.h"
@@ -30,6 +31,8 @@ private:
     image_transport::Publisher image_pub_;
     ros::Publisher center_pub_;
     ros::Publisher human_pub_;
+    ros::Publisher next_pub_;
+    std_msgs::Bool next_msg;
     
     geometry_msgs::PolygonStamped polygon;
     geometry_msgs::Polygon detected_points;
@@ -46,6 +49,10 @@ BlimpHumanTracker::BlimpHumanTracker() : BGSub::BGSub(true, false), it_(nh_) {
     
     center_pub_ = nh_.advertise<geometry_msgs::PointStamped>("/cam_"+camera+"/blimp_center", 1);
     human_pub_ = nh_.advertise<geometry_msgs::PolygonStamped>("/cam_"+camera+"/human_center", 1);
+    next_pub_ = nh_.advertise<std_msgs::Bool>("/cam_"+camera+"/next",1);
+    next_msg.data = true;
+    ros::Duration(1.0).sleep();
+    next_pub_.publish(next_msg);
 }
 
 void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) {
@@ -84,7 +91,9 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
         point_msg.point.y = blimp_center.y;
         center_pub_.publish(point_msg);
     }
-    waitKey(1);
+    waitKey(0);
+    next_msg.data = true;
+    next_pub_.publish(next_msg);
 }
 
 

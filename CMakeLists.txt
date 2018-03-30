@@ -151,6 +151,8 @@ add_executable(blimp_human_track_node src/BlimpHumanTracker.cpp src/BGSub.cpp sr
 
 add_executable(triangulate_blimp_node src/Triangulator.cpp)
 
+add_executable(stream_file_node src/Streamer.cpp)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -174,6 +176,11 @@ target_link_libraries(blimp_human_track_node
 )
 
 target_link_libraries(triangulate_blimp_node
+  ${OpenCV_LIBRARIES}
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(stream_file_node
   ${OpenCV_LIBRARIES}
   ${catkin_LIBRARIES}
 )
