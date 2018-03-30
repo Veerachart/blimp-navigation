@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(blimp-navigation)
+project(blimp_navigation)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -18,6 +18,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   tf
   tf_conversions
+  dynamic_reconfigure
 )
 find_package( ZLIB REQUIRED )
 find_package( OpenCV REQUIRED )
@@ -96,10 +97,9 @@ find_package( OpenCV REQUIRED )
 ##     and list every .cfg file to be processed
 
 ## Generate dynamic reconfigure parameters in the 'cfg' folder
-# generate_dynamic_reconfigure_options(
-#   cfg/DynReconf1.cfg
-#   cfg/DynReconf2.cfg
-# )
+generate_dynamic_reconfigure_options(
+  cfg/Controller.cfg
+)
 
 ###################################
 ## catkin specific configuration ##
@@ -153,6 +153,8 @@ add_executable(triangulate_blimp_node src/Triangulator.cpp)
 
 add_executable(stream_file_node src/Streamer.cpp)
 
+add_executable(blimp_controller_node src/BlimpController.cpp)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -182,6 +184,10 @@ target_link_libraries(triangulate_blimp_node
 
 target_link_libraries(stream_file_node
   ${OpenCV_LIBRARIES}
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(blimp_controller_node
   ${catkin_LIBRARIES}
 )
 

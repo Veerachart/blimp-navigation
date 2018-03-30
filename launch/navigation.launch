@@ -1,0 +1,52 @@
+<launch>
+    <group ns="blimp">
+        <node name="blimp_controller" pkg="blimp_navigation" type="blimp_controller_node" output="screen"> </node>
+        <node name="pid_ux" pkg="pid" type="controller">
+            <param name="Kp" value="-0.004" />
+            <param name="Ki" value="-5.236e-4" />
+            <param name="Kd" value="-0.08" />
+            <param name="upper_limit"  value="1.0" />
+            <param name="lower_limit"  value="-1.0" />
+            <param name="windup_limit" value="1.0" />
+            <param name="min_loop_frequency" value="8.0" />
+            <param name="max_loop_frequency" value="12.0" />
+            <param name="topic_from_controller" value="u_x" />
+            <param name="topic_from_plant" value="dist" />
+            <remap from="setpoint" to="/setpoint_x" />
+        </node>
+        <node name="pid_uy" pkg="pid" type="controller">
+            <param name="Kp" value="-0.004" />
+            <param name="Ki" value="-5.236e-4" />
+            <param name="Kd" value="-0.08" />
+            <param name="upper_limit"  value="1.0" />
+            <param name="lower_limit"  value="-1.0" />
+            <param name="windup_limit" value="1.0" />
+            <param name="min_loop_frequency" value="8.0" />
+            <param name="max_loop_frequency" value="12.0" />
+            <param name="topic_from_controller" value="u_y" />
+            <param name="topic_from_plant" value="dist_y" />
+            <remap from="setpoint" to="/setpoint_y" />
+        </node>
+        <node name="pid_uz" pkg="pid" type="controller">
+            <param name="Kp" value="-0.0001312" />
+            <param name="Ki" value="-1.74e-5" />
+            <param name="Kd" value="-0.014704" />
+            <param name="upper_limit"  value="1.0" />
+            <param name="lower_limit"  value="-1.0" />
+            <param name="windup_limit" value="1.0" />
+            <param name="min_loop_frequency" value="8.0" />
+            <param name="max_loop_frequency" value="12.0" />
+            <param name="topic_from_controller" value="u_z" />
+            <param name="topic_from_plant" value="z" />
+            <remap from="setpoint" to="/setpoint_z" />
+        </node>
+        <node name="blimp_sim" pkg="blimp_controller" type="sim3D_node" output="screen"> </node>
+        <!--<node name="ble_blimp" pkg="ble_joy_controller" type="ble_pid_node.py" > </node>-->
+    </group>
+    
+    <node pkg="rostopic" type="rostopic" name="set_x" args="pub /setpoint_x std_msgs/Float64 0.0" />
+    <node pkg="rostopic" type="rostopic" name="set_y" args="pub /setpoint_y std_msgs/Float64 0.0" />
+    <node pkg="rostopic" type="rostopic" name="set_z" args="pub /setpoint_z std_msgs/Float64 0.0" />
+    
+    <node name="dynamic_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>
+</launch>
