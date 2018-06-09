@@ -11,22 +11,38 @@ using namespace cv;
 class Streamer {
     VideoCapture player1;
     VideoCapture player2;
-    ros::NodeHandle nh_;
+    //ros::NodeHandle nh_;
     Mat frame1, frame2;
-    image_transport::ImageTransport it;
+    //image_transport::ImageTransport it;
     image_transport::Publisher left_pub, right_pub;
     ros::Subscriber next_sub_l, next_sub_r;
     sensor_msgs::ImagePtr msg;
     
 public:
-    Streamer() : it(nh_) {
-        if(!player1.open("/home/veerachart/Videos/CLIP_20170915-215436_left.mp4") || !player2.open("/home/veerachart/Videos/CLIP_20170915-215424_right.mp4")){
-            std::cerr << "Error opening video stream" << std::endl;
+    Streamer(){
+        ros::NodeHandle nh_;
+        ros::NodeHandle nh_priv_("~");
+        image_transport::ImageTransport it(nh_);
+        std::string left_vid_name, right_vid_name;
+        if (!nh_priv_.hasParam("left_video") || !nh_priv_.hasParam("right_video") || !nh_priv_.hasParam("left_start_ms") || !nh_priv_.hasParam("right_start_ms")) {
+            ROS_ERROR("USAGE: rosrun blimp_navigation stream_file_node _left_video:=left_video_file_name.mp4 _right_video:=right_video_file_name.mp4 _left_start_ms:=1000 _right_start_ms:=2000");
             ros::shutdown();
             return;
         }
-        player1.set(CV_CAP_PROP_POS_MSEC, 229050);
-        player2.set(CV_CAP_PROP_POS_MSEC, 227000);
+        nh_priv_.getParam("left_video", left_vid_name);
+        nh_priv_.getParam("right_video", right_vid_name);
+        ROS_INFO("%s", left_vid_name.c_str());
+        ROS_INFO("%s", right_vid_name.c_str());
+        if(!player1.open(left_vid_name) || !player2.open(right_vid_name)){
+            ROS_ERROR("Error opening video stream");
+            ros::shutdown();
+            return;
+        }
+        int left_start_ms, right_start_ms;
+        nh_priv_.getParam("left_start_ms", left_start_ms);
+        nh_priv_.getParam("right_start_ms", right_start_ms);
+        player1.set(CV_CAP_PROP_POS_MSEC, left_start_ms);
+        player2.set(CV_CAP_PROP_POS_MSEC, right_start_ms);
         left_pub = it.advertise("/cam_left/raw_video", 1);
         right_pub = it.advertise("/cam_right/raw_video", 1);
         next_sub_l = nh_.subscribe("/cam_left/next", 1, &Streamer::nextCallback, this);

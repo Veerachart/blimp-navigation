@@ -25,8 +25,6 @@ public:
     void imageCallback(const sensor_msgs::Image::ConstPtr& msg);
     
 private:
-    ros::NodeHandle nh_;
-    image_transport::ImageTransport it_;
     image_transport::Subscriber image_sub_;
     image_transport::Publisher image_pub_;
     ros::Publisher center_pub_;
@@ -43,17 +41,21 @@ private:
 };
 
 BlimpHumanTracker::BlimpHumanTracker(std::ofstream &file, const char* file_name) :
-        BGSub::BGSub(true, file, file_name, true, true), it_(nh_) {
+        BGSub::BGSub(true, file, file_name, true, true) {
+    ros::NodeHandle nh_;
+    ros::NodeHandle nh_priv_("~");
+    image_transport::ImageTransport it_(nh_);
+
     std::string camera (nh_.resolveName("camera"), 1, 5);
     //if (nh_.resolveName("save_video") == "/true")
     //    save_video = true;
     image_pub_ = it_.advertise("/cam_"+camera+"/detection_image", 1);
     image_sub_ = it_.subscribe("/cam_"+camera+"/raw_video", 1, &BlimpHumanTracker::imageCallback, this);
     
-    nh_.setParam("detect_human", false);
-    if (!nh_.hasParam("detect_human"))
-        ROS_INFO("No parameter detect_human found");
-    //nh_.param<bool>("detect_human", detect_human, true);
+    //nh_.setParam("detect_human", false);
+    //if (!nh_.hasParam("detect_human"))
+    //    ROS_INFO("No parameter detect_human found");
+    nh_priv_.param<bool>("detect_human", detect_human, true);
     
     center_pub_ = nh_.advertise<geometry_msgs::PointStamped>("/cam_"+camera+"/blimp_center", 1);
     human_pub_ = nh_.advertise<geometry_msgs::PolygonStamped>("/cam_"+camera+"/human_center", 1);
@@ -106,12 +108,14 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
 
 
 int main (int argc, char **argv) {
+    std::cout << argv[0] << ", " << argv[1] << endl;
     ros::init(argc, argv, "blimp_human_tracker", ros::init_options::AnonymousName);
     //ros::NodeHandle nh();
     ros::NodeHandle nh_priv("~");
     string file_name;
     nh_priv.param<std::string>("file_name", file_name, "~/temp.csv");
-    std::ofstream file(file_name.c_str());
+    string csv_name = file_name + ".csv";
+    std::ofstream file(csv_name.c_str());
     BlimpHumanTracker tracker = BlimpHumanTracker(file, file_name.c_str());
     ROS_INFO("START");
     ros::spin();

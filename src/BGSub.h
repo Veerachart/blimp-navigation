@@ -79,6 +79,12 @@ protected:
     ofstream &f;
     long unsigned int count_img;
     bool useFisheyeHOG;
+
+    float camHeight;
+    float humanHeight;
+    float humanWidth;
+    float m;            // camera's m (scaling from metric to pixel
+    float k1;           // first coefficient in fisheye model
 };
 
 #endif

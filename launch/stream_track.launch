@@ -1,0 +1,20 @@
+<launch>
+    <node name="streamer" pkg="blimp_navigation" type="stream_file_node" output="screen" required="true">
+        <param name="/left_video" value="/home/veerachart/Videos/Left_20180608-205121.mp4"/>
+        <param name="/right_video" value="/home/veerachart/Videos/Right_20180608-205123.mp4"/>
+        <param name="/left_start_ms" value="0"/>
+        <param name="/right_start_ms" value="0"/>
+    </node>
+    
+    <node name="track_left" pkg="blimp_navigation" type="blimp_human_track_node" output="screen">
+        <remap from="camera" to="left"/>
+        <param name="detect_human" value="true" />
+        <param name="file_name" value="$(find blimp_navigation)/log/test_ros_l" />
+    </node>
+    
+    <node name="track_right" pkg="blimp_navigation" type="blimp_human_track_node" output="screen">
+        <remap from="camera" to="right"/>
+        <param name="detect_human" value="true" />
+        <param name="file_name" value="$(find blimp_navigation)/log/test_ros_r" />
+    </node>
+</launch>

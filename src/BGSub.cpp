@@ -48,9 +48,9 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
 
     save_video = _toSave;
     if (save_video) {
-        string videoName = "output/" + string(outFileName) + ".avi";
-        outputVideo.open(videoName, CV_FOURCC('D','I','V','X'), 10, Size(800, 660), true);
-		//outputVideo.open(videoName, CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        string videoName = string(outFileName) + ".avi";
+        //outputVideo.open(videoName, CV_FOURCC('D','I','V','X'), 10, Size(800, 660), true);
+		outputVideo.open(videoName, CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
 		if (!outputVideo.isOpened()) {
 			cerr << "Could not write video." << endl;
 			return;
@@ -103,6 +103,12 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
     // Then use them to indicate how many data need to be read.
     count_img = 0;
     imgBorder = 12;
+
+    camHeight = 2.6;
+    humanHeight = 1.7;
+    humanWidth = 0.6;
+    m = 157.;
+    k1 = 1.5;
 }
 
 BGSub::~BGSub() {
@@ -974,12 +980,15 @@ RotatedRect BGSub::groupBlimp ( vector< vector<Point> > &inputContours, double d
 
 Size BGSub::getHumanSize(float radius) {
 	float width;
-	if (radius > 280)
+
+	width = cvRound(humanWidth * radius /((camHeight-humanHeight) * tan(radius/(m*k1))));
+	width = max(32.f, min(100.f, width));
+	/*if (radius > 280)
 		width = 24.;
 	else if (radius < 120)
 		width = 88.;
 	else
-		width = cvRound(136.26 - 0.4*radius);
+		width = cvRound(136.26 - 0.4*radius);*/
 	return Size(width, 2*width);
 }
 
