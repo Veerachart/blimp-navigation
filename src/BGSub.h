@@ -9,13 +9,15 @@ using namespace cv;
 
 class BGSub {
 public:
-    BGSub(bool _toDraw, bool _toSave = false);
+    BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSave = false, bool _useFisheyeHOG = false);
     ~BGSub();
-    bool processImage (Mat &input_img);
+    bool processImage (Mat &input_img, bool detect_human=true);
 protected:
     void groupContours ( vector< vector<Point> > inputContours, vector<RotatedRect> &outputBoundingBoxes, vector<RotatedRect> &rawBoundingBoxes, double distanceThreshold=1.0 );
     RotatedRect groupBlimp ( vector< vector<Point> > &inputContours, double distanceThreshold=1.0 );
     Size getHumanSize(float radius);
+    void detectOriginalHOG(Mat &img, vector<RotatedRect> &ROIs, vector<RotatedRect> &detections, Size size_min, Size size_max, double scale0, int flag);
+    void groupRectanglesNMS(vector<cv::RotatedRect>& rectList, vector<double>& weights, int groupThreshold, double overlapThreshold) const;
 
     Mat fgMaskMOG2;
     BackgroundSubtractorMOG2 pMOG2;
@@ -54,9 +56,17 @@ protected:
     VideoWriter outputVideo;
     bool save_video;
     
+    // Fisheye HOG
     FisheyeHOGDescriptor hog_body;
     FisheyeHOGDescriptor hog_head;
     FisheyeHOGDescriptor hog_direction;
+
+    // Original HOG
+    HOGDescriptor hog_body_orig;
+    HOGDescriptor hog_head_orig;
+    HOGDescriptor hog_direction_orig;
+    int imgBorder;
+
     HOGDescriptor hog_original;
     vector<TrackedObject> tracked_objects;
     vector<TrackedObject> tracked_humans;
@@ -65,6 +75,10 @@ protected:
     bool toDraw;
     
     fern_based_classifier * classifier;
+
+    ofstream &f;
+    long unsigned int count_img;
+    bool useFisheyeHOG;
 };
 
 #endif

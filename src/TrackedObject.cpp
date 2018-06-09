@@ -1,5 +1,3 @@
-#include <opencv2/opencv.hpp>
-#include <math.h>
 #include "TrackedObject.h"
 
 using namespace cv;
@@ -36,8 +34,9 @@ TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, boo
 	else
 		countHuman = 0;
 	if (isHeadDetected) {
-		heightRatio = norm(headDetection.center - objDetection.center)/ objDetection.size.height;
-		deltaAngle = headDetection.angle - objDetection.angle;
+	    Point2f bodyToHead = headDetection.center - objDetection.center;
+		heightRatio = norm(bodyToHead)/ objDetection.size.height;
+		deltaAngle = atan2(bodyToHead.x, -bodyToHead.y) - objDetection.angle;
 		headRatio = headDetection.size.width/objDetection.size.width;
 		headKF.statePost = (Mat_<float>(4,1) << headDetection.center.x, headDetection.center.y, 0, 0);
 		headWidth = headDetection.size.width;
@@ -51,7 +50,8 @@ TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, boo
 		Point2f headCenter = objDetection.center + heightRatio*objDetection.size.height*Point2f(sin(theta_r), -cos(theta_r));
 		headKF.statePost = (Mat_<float>(4,1) << headCenter.x, headCenter.y, 0, 0);
 		headWidth = headRatio*objDetection.size.width;
-		headROI = RotatedRect(headCenter, Size(headWidth, headWidth), objDetection.angle);
+		float headAngle = atan2(headCenter.x, -headCenter.y);
+		headROI = RotatedRect(headCenter, Size(headWidth, headWidth), headAngle);
 	}
 	//setIdentity(headKF.transitionMatrix);
 	//setIdentity(headKF.controlMatrix);
@@ -61,6 +61,8 @@ TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, boo
 	status = OBJ;
 
 	headDirection = -1;			// Init
+    currentEstimation = -1;
+    currentMovingDirection = -1;
 
 	img_center = imgCenter;
 }
@@ -117,7 +119,10 @@ Point2f TrackedObject::UpdateObject(RotatedRect objDetection, bool isHumanDetect
 		}
 		setIdentity(objectKF.measurementNoiseCov, Scalar::all(objDetection.size.width*objDetection.size.width/16.));
 		measurement = (Mat_<float>(2,1) << objDetection.center.x, objDetection.center.y);
-		bodyWidth = objDetection.size.width;
+        if (countHuman == 1)        // the first time detected as human, should not keep previous size
+            bodyWidth = objDetection.size.width;
+        else                        // average with the old one to smooth the width
+            bodyWidth = 0.5*(bodyWidth + objDetection.size.width);
 	}
 	else {
 		setIdentity(objectKF.measurementNoiseCov, Scalar::all(objDetection.size.width*objDetection.size.width/16.));		// Larger variance for object
@@ -158,19 +163,49 @@ Point2f TrackedObject::UpdateObject(RotatedRect objDetection, bool isHumanDetect
 	return Point2f(prediction.at<float>(0,0), prediction.at<float>(1,0));
 }*/
 
+Point2f TrackedObject::updateHeadfromBody() {
+    if (countNonZero(headKF.statePre) == 0)             // Just created, without any prediction performed
+        return Point2f();
+    // After updating the object, use it as weak measurement of head
+    float theta_r = (objectROI.angle + deltaAngle)*CV_PI/180.;
+    Point2f headCenter = objectROI.center + heightRatio*objectROI.size.height*Point2f(sin(theta_r), -cos(theta_r));
+    Mat measurement_frombody = (Mat_<float>(2,1) << headCenter.x, headCenter.y);
+    headWidth = headRatio*objectROI.size.width;
+    if (headWidth < 6.) {
+        // Too small and should be limited to prevent problems
+        headWidth = 6.;
+        headRatio = headWidth/objectROI.size.width;
+    }
+    setIdentity(headKF.measurementNoiseCov, Scalar::all(objectROI.size.width*objectROI.size.width/16.));
+    Mat corrected_head = headKF.correct(measurement_frombody);
+    headROI = RotatedRect(Point2f(corrected_head.at<float>(0,0), corrected_head.at<float>(1,0)),
+                          Size(headWidth, headWidth),
+                          atan2(corrected_head.at<float>(0,0) - img_center.x, img_center.y - corrected_head.at<float>(1,0)) *180./CV_PI);
+    //heightRatio = 0.3125;
+    //deltaAngle = 0.;
+    //headRatio = 0.375;
+
+    //Mat obj_vel = corrected_state.rowRange(3,6);
+    sdBody = sqrt(min(objectKF.errorCovPost.at<float>(0,0), objectKF.errorCovPost.at<float>(1,1)));
+    sdHead = sqrt(min(headKF.errorCovPost.at<float>(0,0), headKF.errorCovPost.at<float>(1,1)));
+
+    return headROI.center;
+}
+
 Point2f TrackedObject::UpdateHead(RotatedRect headDetection) {
-	Mat measurement = (Mat_<float>(2,1) << headDetection.center.x, headDetection.center.y);
-	headWidth = headDetection.size.width;
-	setIdentity(headKF.measurementNoiseCov, Scalar::all(headDetection.size.width*headDetection.size.width/16.));
-	Mat corrected_state = headKF.correct(measurement);
-	sdHead = sqrt(min(headKF.errorCovPost.at<float>(0,0), headKF.errorCovPost.at<float>(1,1)));
-	headROI = RotatedRect(Point2f(corrected_state.at<float>(0,0), corrected_state.at<float>(1,0)),
-						  Size2f(headWidth, headWidth),
-						  atan2(corrected_state.at<float>(0,0) - img_center.x, img_center.y - corrected_state.at<float>(1,0)) *180./CV_PI);
-	heightRatio = norm(headROI.center - objectROI.center) / objectROI.size.height;
-	deltaAngle = headROI.angle - objectROI.angle;
-	headRatio = headROI.size.width/objectROI.size.width;
-	return Point2f(corrected_state.at<float>(0,0), corrected_state.at<float>(1,0));
+    Mat measurement = (Mat_<float>(2,1) << headDetection.center.x, headDetection.center.y);
+    headWidth = headDetection.size.width;
+    setIdentity(headKF.measurementNoiseCov, Scalar::all(headDetection.size.width*headDetection.size.width/16.));
+    Mat corrected_state = headKF.correct(measurement);
+    sdHead = sqrt(min(headKF.errorCovPost.at<float>(0,0), headKF.errorCovPost.at<float>(1,1)));
+    headROI = RotatedRect(Point2f(corrected_state.at<float>(0,0), corrected_state.at<float>(1,0)),
+                          Size2f(headWidth, headWidth),
+                          atan2(corrected_state.at<float>(0,0) - img_center.x, img_center.y - corrected_state.at<float>(1,0)) *180./CV_PI);
+    Point2f bodyToHead = headROI.center - objectROI.center;
+    heightRatio = norm(bodyToHead) / objectROI.size.height;
+    deltaAngle = atan2(bodyToHead.x, -bodyToHead.y)*180./CV_PI - objectROI.angle;
+    headRatio = headROI.size.width/objectROI.size.width;
+    return Point2f(corrected_state.at<float>(0,0), corrected_state.at<float>(1,0));
 }
 
 bool TrackedObject::IsForThisObject(RotatedRect new_obj) {
@@ -243,52 +278,77 @@ int TrackedObject::getCount() {
 }
 
 void TrackedObject::updateDirection(int estimation, int movingDirection) {
-	if (headDirection < 0) {
-		headDirection = estimation;
-		return;
-	}
+    currentEstimation = estimation;
+    currentMovingDirection = movingDirection;
+    if (headDirection < 0) {
+        if (movingDirection >= 0) {
+            if (estimation >= 0) {
+                if (abs(movingDirection - estimation) >= 180)
+                    headDirection = cvRound((movingDirection + estimation + 360)/2.);
+                else
+                    headDirection = cvRound((movingDirection + estimation)/2.);
+            }
+            else {
+                headDirection = movingDirection;
+            }
+        }
+        else {
+            headDirection = estimation;
+        }
+        return;
+    }
 
-	if (estimation < 0) {
-		// When the head is out of the frame and direction cannot be estimated
-		// Use only moving direction
-		if (movingDirection > 0) {
-			// Moving
-			if (abs(movingDirection - headDirection) >= 180) {
-				// crossing 0,360 line
-				headDirection = cvRound((headDirection + movingDirection + 360)/2.);
-				if (headDirection > 360)
-					headDirection -= 360;
-			}
-			else {
-				headDirection = cvRound((headDirection + movingDirection)/2.);
-			}
-		}
-		return;
-	}
+    if (estimation < 0) {
+        // When the head is out of the frame and direction cannot be estimated
+        // Use only moving direction
+        if (movingDirection >= 0) {
+            // Moving
+            if (abs(movingDirection - headDirection) >= 180) {
+                // crossing 0,360 line
+                headDirection = cvRound((headDirection + movingDirection + 360)/2.);
+                if (headDirection > 360)
+                    headDirection -= 360;
+            }
+            else {
+                headDirection = cvRound((headDirection + movingDirection)/2.);
+            }
+        }
+        return;
+    }
 
-	int diff = abs(estimation - headDirection);
-	if (diff <= 45) {				// <= 45 degree change
-		headDirection = cvRound((headDirection + estimation)/2.);
-	}
-	else if ( diff >= 315) {		// <= 45 degree change, crossing the line 0,360
-		headDirection = cvRound((headDirection + estimation + 360)/2.);
-		if (headDirection > 360)
-			headDirection -= 360;
-	}
-	// More than that, update with the moving direction instead
-	else {
-		if (movingDirection > 0) {
-			// Moving
-			if (abs(movingDirection - headDirection) >= 180) {
-				// crossing 0,360 line
-				headDirection = cvRound((headDirection + movingDirection + 360)/2.);
-				if (headDirection > 360)
-					headDirection -= 360;
-			}
-			else {
-				headDirection = cvRound((headDirection + movingDirection)/2.);
-			}
-		}
-	}
+    int diff = abs(estimation - headDirection);
+    if (diff <= 45) {               // <= 45 degree change
+        headDirection = cvRound((headDirection + estimation)/2.);
+    }
+    else if ( diff >= 315) {        // <= 45 degree change, crossing the line 0,360
+        headDirection = cvRound((headDirection + estimation + 360)/2.);
+        if (headDirection >= 360)
+            headDirection -= 360;
+    }
+    // More than that, update with the moving direction instead
+    else {
+        if (movingDirection > 0) {
+            // Moving
+            if (abs(movingDirection - headDirection) >= 180) {
+                // crossing 0,360 line
+                headDirection = cvRound((headDirection + movingDirection + 360)/2.);
+                if (headDirection >= 360)
+                    headDirection -= 360;
+            }
+            else {
+                headDirection = cvRound((headDirection + movingDirection)/2.);
+            }
+        }
+    }
+}
+
+string TrackedObject::getStringForSave() {
+    std::ostringstream ss;
+    ss << countHuman << ",";
+    ss << objectROI.center.x << "," << objectROI.center.y << "," << objectROI.size.width << "," << objectROI.size.height << "," << objectROI.angle << ",";
+    ss << headROI.center.x << "," << headROI.center.y << "," << headROI.size.width << "," << headROI.size.height << "," << headROI.angle << ",";
+    ss << heightRatio << "," << headRatio << "," << deltaAngle << ",";
+    ss << currentEstimation << "," << currentMovingDirection << "," << headDirection;
+    return ss.str();
 }
 /////////////////////////////////

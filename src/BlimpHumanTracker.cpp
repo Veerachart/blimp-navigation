@@ -21,7 +21,7 @@ namespace enc = sensor_msgs::image_encodings;
 
 class BlimpHumanTracker : public BGSub {
 public:
-    BlimpHumanTracker();
+    BlimpHumanTracker(std::ofstream &file, const char* file_name);
     void imageCallback(const sensor_msgs::Image::ConstPtr& msg);
     
 private:
@@ -38,14 +38,22 @@ private:
     geometry_msgs::Polygon detected_points;
     geometry_msgs::Point32 point;
     geometry_msgs::PointStamped point_msg;
+    
+    bool detect_human;
 };
 
-BlimpHumanTracker::BlimpHumanTracker() : BGSub::BGSub(true, false), it_(nh_) {
+BlimpHumanTracker::BlimpHumanTracker(std::ofstream &file, const char* file_name) :
+        BGSub::BGSub(true, file, file_name, true, true), it_(nh_) {
     std::string camera (nh_.resolveName("camera"), 1, 5);
     //if (nh_.resolveName("save_video") == "/true")
     //    save_video = true;
     image_pub_ = it_.advertise("/cam_"+camera+"/detection_image", 1);
     image_sub_ = it_.subscribe("/cam_"+camera+"/raw_video", 1, &BlimpHumanTracker::imageCallback, this);
+    
+    nh_.setParam("detect_human", false);
+    if (!nh_.hasParam("detect_human"))
+        ROS_INFO("No parameter detect_human found");
+    //nh_.param<bool>("detect_human", detect_human, true);
     
     center_pub_ = nh_.advertise<geometry_msgs::PointStamped>("/cam_"+camera+"/blimp_center", 1);
     human_pub_ = nh_.advertise<geometry_msgs::PolygonStamped>("/cam_"+camera+"/human_center", 1);
@@ -71,7 +79,7 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
     ///////////
     
     // Inherited processing
-    processImage(cv_ptr->image);
+    processImage(cv_ptr->image, detect_human);
     
     //ROS Stuff
     image_pub_.publish(cv_ptr->toImageMsg());
@@ -91,7 +99,7 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
         point_msg.point.y = blimp_center.y;
         center_pub_.publish(point_msg);
     }
-    waitKey(0);
+    waitKey(1);
     next_msg.data = true;
     next_pub_.publish(next_msg);
 }
@@ -99,8 +107,12 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
 
 int main (int argc, char **argv) {
     ros::init(argc, argv, "blimp_human_tracker", ros::init_options::AnonymousName);
-    ros::start();
-    BlimpHumanTracker tracker;
+    //ros::NodeHandle nh();
+    ros::NodeHandle nh_priv("~");
+    string file_name;
+    nh_priv.param<std::string>("file_name", file_name, "~/temp.csv");
+    std::ofstream file(file_name.c_str());
+    BlimpHumanTracker tracker = BlimpHumanTracker(file, file_name.c_str());
     ROS_INFO("START");
     ros::spin();
     

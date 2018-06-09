@@ -5,6 +5,7 @@
 #include <cvaux.h>
 #include <math.h>
 #include <opencv2/opencv.hpp>
+#include <iostream>
 
 using namespace cv;
 
@@ -44,6 +45,9 @@ public:
 	int getDirection();
 	void updateDirection(int estimation, int movingDirection);
 	int getCount();
+	string getStringForSave();
+
+    Point2f updateHeadfromBody();
 
 private:
 	KalmanFilter objectKF;
@@ -66,6 +70,9 @@ private:
 
 	// For tracking of head direction
 	int headDirection;
+    // For logging head direction (directly from estimation) and direction of movement
+    int currentEstimation;
+    int currentMovingDirection;
 
 	Point2f img_center;
 };
