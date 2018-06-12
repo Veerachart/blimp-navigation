@@ -17,6 +17,8 @@ class Streamer {
     image_transport::Publisher left_pub, right_pub;
     ros::Subscriber next_sub_l, next_sub_r;
     sensor_msgs::ImagePtr msg;
+    bool leftFinished;
+    bool rightFinished;
     
 public:
     Streamer(){
@@ -31,8 +33,6 @@ public:
         }
         nh_priv_.getParam("left_video", left_vid_name);
         nh_priv_.getParam("right_video", right_vid_name);
-        ROS_INFO("%s", left_vid_name.c_str());
-        ROS_INFO("%s", right_vid_name.c_str());
         if(!player1.open(left_vid_name) || !player2.open(right_vid_name)){
             ROS_ERROR("Error opening video stream");
             ros::shutdown();
@@ -45,12 +45,34 @@ public:
         player2.set(CV_CAP_PROP_POS_MSEC, right_start_ms);
         left_pub = it.advertise("/cam_left/raw_video", 1);
         right_pub = it.advertise("/cam_right/raw_video", 1);
-        next_sub_l = nh_.subscribe("/cam_left/next", 1, &Streamer::nextCallback, this);
-        next_sub_r = nh_.subscribe("/cam_right/next", 1, &Streamer::nextCallback, this);
+        next_sub_l = nh_.subscribe("/cam_left/next", 1, &Streamer::nextCallbackL, this);
+        next_sub_r = nh_.subscribe("/cam_right/next", 1, &Streamer::nextCallbackR, this);
+        leftFinished = false;
+        rightFinished = false;
     }
     
-    void nextCallback(const std_msgs::Bool::ConstPtr& flagMsg) {
+    void nextCallbackL(const std_msgs::Bool::ConstPtr& flagMsg) {
         if (flagMsg->data) {
+            leftFinished = true;
+            if (rightFinished) {
+                if(!player1.read(frame1) || !player2.read(frame2)){
+                    ros::shutdown();
+                    return;
+                }
+                msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", frame1).toImageMsg();
+                left_pub.publish(msg);
+                msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", frame2).toImageMsg();
+                right_pub.publish(msg);
+
+                leftFinished = false;
+                rightFinished = false;
+            }
+        }
+    }
+
+    void nextCallbackR(const std_msgs::Bool::ConstPtr& flagMsg) {
+        rightFinished = true;
+        if (leftFinished) {
             if(!player1.read(frame1) || !player2.read(frame2)){
                 ros::shutdown();
                 return;
@@ -59,6 +81,9 @@ public:
             left_pub.publish(msg);
             msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", frame2).toImageMsg();
             right_pub.publish(msg);
+
+            leftFinished = false;
+            rightFinished = false;
         }
     }
 };
