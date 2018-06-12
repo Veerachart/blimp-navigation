@@ -108,7 +108,6 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
 
 
 int main (int argc, char **argv) {
-    std::cout << argv[0] << ", " << argv[1] << endl;
     ros::init(argc, argv, "blimp_human_tracker", ros::init_options::AnonymousName);
     //ros::NodeHandle nh();
     ros::NodeHandle nh_priv("~");

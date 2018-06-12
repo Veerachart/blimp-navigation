@@ -164,13 +164,19 @@ Point2f TrackedObject::UpdateObject(RotatedRect objDetection, bool isHumanDetect
 }*/
 
 Point2f TrackedObject::updateHeadfromBody() {
-    if (countNonZero(headKF.statePre) == 0)             // Just created, without any prediction performed
-        return Point2f();
     // After updating the object, use it as weak measurement of head
     float theta_r = (objectROI.angle + deltaAngle)*CV_PI/180.;
     Point2f headCenter = objectROI.center + heightRatio*objectROI.size.height*Point2f(sin(theta_r), -cos(theta_r));
-    Mat measurement_frombody = (Mat_<float>(2,1) << headCenter.x, headCenter.y);
     headWidth = headRatio*objectROI.size.width;
+
+    if (countNonZero(headKF.statePre) == 0) {             // Just created, without any prediction performed
+        headKF.statePre = (Mat_<float>(4,1) << headCenter.x, headCenter.y, 0, 0);
+        headROI = RotatedRect(headCenter, Size(headWidth, headWidth),
+                              atan2(headCenter.x - img_center.x, img_center.y - headCenter.y) *180./CV_PI);
+        return headROI.center;
+    }
+
+    Mat measurement_frombody = (Mat_<float>(2,1) << headCenter.x, headCenter.y);
     if (headWidth < 6.) {
         // Too small and should be limited to prevent problems
         headWidth = 6.;
@@ -350,5 +356,18 @@ string TrackedObject::getStringForSave() {
     ss << heightRatio << "," << headRatio << "," << deltaAngle << ",";
     ss << currentEstimation << "," << currentMovingDirection << "," << headDirection;
     return ss.str();
+}
+
+bool TrackedObject::isTrackedHeadInvalid() {
+    return (heightRatio > 0.5 || heightRatio < 0.1 || headRatio > 0.8 || headRatio < 0.1 || fabs(deltaAngle) > 26.6);       // atan(0.5)
+}
+
+bool TrackedObject::isNewHeadLegit(RotatedRect head) {
+    float heightR = norm(head.center - objectROI.center)/objectROI.size.height;
+    float headR = head.size.width/bodyWidth;
+    float deltaAng = head.angle - objectROI.angle;
+    while (deltaAng > 180.)
+        deltaAng -= 360.;
+    return (heightR <= 0.5 && heightR >= 0.1 && headR <= 0.8 && headR >= 0.1 && fabs(deltaAng) <= 26.6);
 }
 /////////////////////////////////

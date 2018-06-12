@@ -75,6 +75,7 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
 	hog_size = classifier->hog_image_size;
 
     if (useFisheyeHOG) {
+        //hog_body.setSVMDetector(FisheyeHOGDescriptor::getDefaultPeopleDetector());
         hog_body.load("/home/veerachart/HOG_Classifiers/32x64_weighted/cvHOGClassifier_32x64+hard.yaml");
         hog_head.load("/home/veerachart/HOG_Classifiers/head_fastHOG.yaml");
         hog_direction = FisheyeHOGDescriptor(Size(hog_size,hog_size), Size(hog_size/2,hog_size/2), Size(hog_size/4,hog_size/4), Size(hog_size/4,hog_size/4), 9);
@@ -105,8 +106,8 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
     imgBorder = 12;
 
     camHeight = 2.6;
-    humanHeight = 1.7;
-    humanWidth = 0.6;
+    humanHeight = 1.8;
+    humanWidth = 0.5;
     m = 157.;
     k1 = 1.5;
 }
@@ -446,12 +447,14 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 					        best_dist = dist;
 				        }
 			        }
-			        if (best_dist < 3*tracked_humans[best_track].getSdHead()) {
+			        if (best_dist < 3*tracked_humans[best_track].getSdHead() || tracked_humans[best_track].isTrackedHeadInvalid()) {
 				        // Update
 				        //cout << "Update head:" << heads[head].center << "," << heads[head].size << " with " << tracked_humans[best_track].getBodyROI().center << "," << tracked_humans[best_track].getBodyROI().size << endl;
-				        tracked_humans[best_track].UpdateHead(heads[head]);
-				        humanHasHead[best_track] = true;
-				        continue;
+			            if (tracked_humans[best_track].isNewHeadLegit(heads[head])){
+                            tracked_humans[best_track].UpdateHead(heads[head]);
+                            humanHasHead[best_track] = true;
+                            continue;
+			            }
 			        }
 			        else {
 				        // Outside 3 SD, should we add a new object here?
@@ -471,12 +474,14 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 				        }
 			        }
 
-			        if (best_dist < 3*tracked_objects[best_track].getSdHead()) {
+			        if (best_dist < 3*tracked_objects[best_track].getSdHead() || tracked_objects[best_track].isTrackedHeadInvalid()) {
 				        // Update
 				        //cout << "Update head:" << heads[head].center << "," << heads[head].size << " with " << tracked_objects[best_track].getBodyROI().center << "," << tracked_objects[best_track].getBodyROI().size << endl;
-				        tracked_objects[best_track].UpdateHead(heads[head]);
-				        objectHasHead[best_track] = true;
-				        continue;
+                        if (tracked_objects[best_track].isNewHeadLegit(heads[head])){
+                            tracked_objects[best_track].UpdateHead(heads[head]);                // <----- OCCURS HERE!
+                            objectHasHead[best_track] = true;
+                            continue;
+                        }
 			        }
 			        else {
 				        // Outside 3 SD, should we add a new object here?

@@ -49,6 +49,9 @@ public:
 
     Point2f updateHeadfromBody();
 
+    bool isTrackedHeadInvalid();
+    bool isNewHeadLegit(RotatedRect head);
+
 private:
 	KalmanFilter objectKF;
 	KalmanFilter headKF;
