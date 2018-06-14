@@ -19,9 +19,27 @@ class Streamer {
     sensor_msgs::ImagePtr msg;
     bool leftFinished;
     bool rightFinished;
+    bool constant_rate;
+    ros::Timer timer_stream;
+
+    void stream(const ros::TimerEvent&) {
+        if (leftFinished && rightFinished) {
+            ros::Time stamp = ros::Time::now();
+            if(!player1.read(frame1) || !player2.read(frame2)){
+                ros::shutdown();
+                return;
+            }
+            msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", frame1).toImageMsg();
+            msg->header.stamp = stamp;
+            left_pub.publish(msg);
+            msg = cv_bridge::CvImage(std_msgs::Header(), "bgr8", frame2).toImageMsg();
+            msg->header.stamp = stamp;
+            right_pub.publish(msg);
+        }
+    }
     
 public:
-    Streamer(){
+    Streamer(bool _constant_rate) : constant_rate(_constant_rate){
         ros::NodeHandle nh_;
         ros::NodeHandle nh_priv_("~");
         image_transport::ImageTransport it(nh_);
@@ -49,12 +67,21 @@ public:
         next_sub_r = nh_.subscribe("/cam_right/next", 1, &Streamer::nextCallbackR, this);
         leftFinished = false;
         rightFinished = false;
+        if (constant_rate) {
+            timer_stream = nh_.createTimer(ros::Duration(0.1), &Streamer::stream, this);
+        }
     }
     
     void nextCallbackL(const std_msgs::Bool::ConstPtr& flagMsg) {
         if (flagMsg->data) {
             leftFinished = true;
             if (rightFinished) {
+                if (constant_rate) {
+                    next_sub_l.shutdown();
+                    next_sub_r.shutdown();
+                    return;
+                }
+
                 if(!player1.read(frame1) || !player2.read(frame2)){
                     ros::shutdown();
                     return;
@@ -73,6 +100,12 @@ public:
     void nextCallbackR(const std_msgs::Bool::ConstPtr& flagMsg) {
         rightFinished = true;
         if (leftFinished) {
+            if (constant_rate) {
+                next_sub_l.shutdown();
+                next_sub_r.shutdown();
+                return;
+            }
+
             if(!player1.read(frame1) || !player2.read(frame2)){
                 ros::shutdown();
                 return;
@@ -90,7 +123,10 @@ public:
 
 int main(int argc, char **argv){
     ros::init(argc, argv, "file_streamer");
-    Streamer streamer;
+    ros::NodeHandle nh_priv_("~");
+    bool constant_rate;
+    nh_priv_.param("constant_rate", constant_rate, true);
+    Streamer streamer(constant_rate);
     ros::spin();
     return 0;
 }
