@@ -53,14 +53,20 @@ protected:
     Mat sd_rotation_human;
     ros::Time last_time;
     ros::Time last_time_human;
+
+    float rLookup1[181], rLookup2[181];
+    float thetaLookup[181];
+
+    void setLookup();
+    float lookupTheta(float radius, int camNum);
 };
 
 Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_center", 1),
                                               sub_right(nh, "cam_right/blimp_center", 1),
                                               sub_human_left(nh, "cam_left/human_center", 1),
                                               sub_human_right(nh, "cam_right/human_center", 1),
-                                              sync(Triangulator::MySyncPolicy(10), sub_left, sub_right), 
-                                              sync_human(Triangulator::MySyncPolicy2(10), sub_human_left, sub_human_right) {
+                                              sync(Triangulator::MySyncPolicy(2), sub_left, sub_right),
+                                              sync_human(Triangulator::MySyncPolicy2(2), sub_human_left, sub_human_right) {
     //sub_left = message_filters::Subscriber<PointStamped>(nh, "cam_left/blimp_center", 1);
     //sub_right = message_filters::Subscriber<PointStamped>(nh, "cam_right/blimp_center", 1);
     //sync = message_filters::Synchronizer<MySyncPolicy> (MySyncPolicy(10), sub_left, sub_right);
@@ -75,12 +81,16 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     
     is_tracking_human = false;
     human_direction = -1;
+    kf_human = KalmanFilter(6,3,0);
     q_human.setRPY(0,0,0);
     transform_human.setRotation(q_human);
     
     setIdentity(kf_blimp.measurementMatrix);
+    setIdentity(kf_human.measurementMatrix);
     const Mat d = (Mat_<float>(1,6)<< 0.0009,0.0009,0.0009,0.0025,0.0025,0.0025);
     kf_blimp.processNoiseCov = Mat::diag(d);
+    const Mat d2 = (Mat_<float>(1,6)<< 0.04,0.04,0.04,0.04,0.04,0.04);
+    kf_human.processNoiseCov = Mat::diag(d2);
     // Parameters of two cameras
     coeffs1[0] = -0.003125;
     coeffs1[2] =  0.001029;
@@ -94,12 +104,12 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     coeffs2[6] =  0.013237;
     coeffs2[8] =  1.492357;
     coeffs2[1] = coeffs2[3] = coeffs2[5] = coeffs2[7] = 0.;
-    R1 = (Mat_<float>(3,3) <<  0.999601,  0.027689, -0.004448,
-							  -0.027689,  0.999617,  0.000062,
-							   0.004448,  0.000062,  0.999990);
-    R2 = (Mat_<float>(3,3) <<  0.997059, -0.075636,  0.012355,
-							   0.075567,  0.997123,  0.005980,
-							  -0.012772, -0.005029,  0.999906);
+    R1 = (Mat_<float>(3,3) <<  0.999228,  0.035960, -0.015825,
+							  -0.035960,  0.999353,  0.000285,
+							   0.015825,  0.000285,  0.999875);
+    R2 = (Mat_<float>(3,3) <<  0.996727, -0.075889,  0.027869,
+							   0.075839,  0.997116,  0.002871,
+							  -0.028007, -0.000748,  0.999607);
 							  
     mu1 = 157.1979;     
     mv1 = 157.2336;     
@@ -112,8 +122,9 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     v02 = 385.32;
     m2 = (mu2+mv2)/2.;
     
-    sigma_u = 5.;
+    sigma_u = 10.;
     ////////////////////////////
+    setLookup();
 }
 
 void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, const PointStampedConstPtr& point_right) {
@@ -139,8 +150,8 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
     y = (point_left->point.y-v01)/mv1;
     phi = atan2(y,x);
     r = sqrt(x*x + y*y);
-    theta = r/coeffs1[8];           // Linear r = k\theta
-                                    // Or interpolation from the lookup table
+    //theta = r/coeffs1[8];         // Linear r = k\theta
+    theta = lookupTheta(r, 1);      // Or interpolation from the lookup table
     if (theta < 0 || theta > CV_PI/2) {
         ROS_INFO("Bad theta");
         return;
@@ -155,7 +166,8 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
     psi1 = asin(rect_r.at<float>(0,0));
     beta1 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
     
-    float J_theta1 = coeffs1[8];    // Linear
+    //float J_theta1 = coeffs1[8];    // Linear
+    float J_theta1 = coeffs1[8] + coeffs1[6] * pow(theta,2) + coeffs1[4] * pow(theta,4) + coeffs1[2] * pow(theta,6) + coeffs1[0] * pow(theta,8);        // Full model
     Mat var_theta_phi1 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m1*m1*J_theta1*J_theta1), 0.,
                                               0., sigma_u*sigma_u/(m1*m1*r*r));
     
@@ -182,8 +194,8 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
     y = (point_right->point.y-v02)/mv2;
     phi = atan2(y,x);
     r = sqrt(x*x + y*y);
-    theta = r/coeffs2[8];           // Linear r = k\theta
-                                    // Or interpolation from the lookup table
+    //theta = r/coeffs2[8];         // Linear r = k\theta
+    theta = lookupTheta(r, 2);      // Or interpolation from the lookup table
     if (theta < 0 || theta > CV_PI/2) {
         ROS_INFO("Bad theta");
         return;
@@ -199,7 +211,8 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
     psi2 = asin(rect_r.at<float>(0,0));
     beta2 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
     
-    float J_theta2 = coeffs2[8];    // Linear
+    //float J_theta2 = coeffs2[8];    // Linear
+    float J_theta2 = coeffs2[8] + coeffs2[6] * pow(theta,2) + coeffs2[4] * pow(theta,4) + coeffs2[2] * pow(theta,6) + coeffs2[0] * pow(theta,8);        // Full model
     Mat var_theta_phi2 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m2*m2*J_theta2*J_theta2), 0.,
                                               0., sigma_u*sigma_u/(m2*m2*r*r));
     
@@ -234,10 +247,10 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
                 x_out = rho*s_psi1;
                 y_out = rho*c_psi1*s_beta1;
                 z_out = rho*c_psi1*c_beta1;
-                
+
                 if (z_out >  0. && z_out < 3.5 &&
-                    x_out > -1. && x_out < 5.  &&
-                    y_out > -5. && y_out < 6.) {        // within the area
+                    x_out >-2.5 && x_out < 6.  &&
+                    y_out > -4. && y_out < 4.) {        // within the area
                     // calculate variance
                     Mat var_combi = Mat::zeros(4,4,CV_32FC1);
                     Mat aux = var_combi.colRange(0,2).rowRange(0,2);
@@ -284,7 +297,7 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
                         kf_blimp.statePost = (Mat_<float>(6,1) << x_out, y_out, z_out, 0., 0., 0.);
                         setIdentity(kf_blimp.errorCovPost);
                         var_p.copyTo(kf_blimp.errorCovPost.colRange(0,3).rowRange(0,3));        // Set variance of x,y,z as computed, leave it to diag(1) for velocity
-                        SVD::compute(kf_blimp.errorCovPost.colRange(0,3).rowRange(0,3), sds, sd_rotation, sd_rotation_t);
+                        SVD::compute(var_p, sds, sd_rotation, sd_rotation_t);
                         is_tracking = true;
                         ROS_INFO("Started tracking");
                     }
@@ -320,8 +333,8 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
     y = (heads_left->polygon.points[0].y-v01)/mv1;
     phi = atan2(y,x);
     r = sqrt(x*x + y*y);
-    theta = r/coeffs1[8];           // Linear r = k\theta
-                                    // Or interpolation from the lookup table
+    //theta = r/coeffs1[8];         // Linear r = k\theta
+    theta = lookupTheta(r, 1);      // Or interpolation from the lookup table
     if (theta < 0 || theta > CV_PI/2) {
         ROS_INFO("Bad theta");
         return;
@@ -336,7 +349,8 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
     psi1 = asin(rect_r.at<float>(0,0));
     beta1 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
     
-    float J_theta1 = coeffs1[8];    // Linear
+    //float J_theta1 = coeffs1[8];    // Linear
+    float J_theta1 = coeffs1[8] + coeffs1[6] * pow(theta,2) + coeffs1[4] * pow(theta,4) + coeffs1[2] * pow(theta,6) + coeffs1[0] * pow(theta,8);        // Full model
     Mat var_theta_phi1 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m1*m1*J_theta1*J_theta1), 0.,
                                               0., sigma_u*sigma_u/(m1*m1*r*r));
     
@@ -363,8 +377,8 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
     y = (heads_right->polygon.points[0].y-v02)/mv2;
     phi = atan2(y,x);
     r = sqrt(x*x + y*y);
-    theta = r/coeffs2[8];           // Linear r = k\theta
-                                    // Or interpolation from the lookup table
+    //theta = r/coeffs2[8];         // Linear r = k\theta
+    theta = lookupTheta(r, 2);      // Or interpolation from the lookup table
     if (theta < 0 || theta > CV_PI/2) {
         ROS_INFO("Bad theta");
         return;
@@ -380,7 +394,8 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
     psi2 = asin(rect_r.at<float>(0,0));
     beta2 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
     
-    float J_theta2 = coeffs2[8];    // Linear
+    //float J_theta2 = coeffs2[8];    // Linear
+    float J_theta2 = coeffs2[8] + coeffs2[6] * pow(theta,2) + coeffs2[4] * pow(theta,4) + coeffs2[2] * pow(theta,6) + coeffs2[0] * pow(theta,8);        // Full model
     Mat var_theta_phi2 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m2*m2*J_theta2*J_theta2), 0.,
                                               0., sigma_u*sigma_u/(m2*m2*r*r));
     
@@ -405,7 +420,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
     ////////////////////////
     float disparity = psi1-psi2;
     
-    if(fabs(beta1 - beta2) < 0.15) {        // On the same epipolar line
+    if(fabs(beta1 - beta2) < 0.2) {        // On the same epipolar line
         if(disparity > 0) {
             float rho = baseline*c_psi2/sin(disparity);
             if (rho <= 10.) {
@@ -416,8 +431,8 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                 z_out = rho*c_psi1*c_beta1;
                 
                 if (z_out >  0. && z_out < 3.5 &&
-                    x_out > -1. && x_out < 5.  &&
-                    y_out > -5. && y_out < 6.) {        // within the area
+                    x_out >-2.5 && x_out < 6.  &&
+                    y_out > -4. && y_out < 4.) {        // within the area
                     // calculate variance
                     Mat var_combi = Mat::zeros(4,4,CV_32FC1);
                     Mat aux = var_combi.colRange(0,2).rowRange(0,2);
@@ -448,6 +463,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                         Mat measurement = (Mat_<float> (3,1) << x_out, y_out, z_out);
                         //std::cout << (measurement - kf_blimp.measurementMatrix*kf_blimp.statePost) << std::endl;
                         Mat x = sd_rotation_human*(measurement - kf_human.measurementMatrix*kf_human.statePost);
+                        //std::cout << "\t" << sds.t() << std::endl;
                         if (fabs(x.at<float>(0,0)) < 3*sds.at<float>(0,0) &&
                             fabs(x.at<float>(1,0)) < 3*sds.at<float>(1,0) &&
                             fabs(x.at<float>(2,0)) < 3*sds.at<float>(2,0)) {
@@ -464,7 +480,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                         kf_human.statePost = (Mat_<float>(6,1) << x_out, y_out, z_out, 0., 0., 0.);
                         setIdentity(kf_human.errorCovPost);
                         var_p.copyTo(kf_human.errorCovPost.colRange(0,3).rowRange(0,3));        // Set variance of x,y,z as computed, leave it to diag(1) for velocity
-                        SVD::compute(kf_human.errorCovPost.colRange(0,3).rowRange(0,3), sds_human, sd_rotation_human, sd_rotation_human_t);
+                        SVD::compute(var_p, sds_human, sd_rotation_human, sd_rotation_human_t);
                         is_tracking_human = true;
                         ROS_INFO("Started tracking");
                     }
@@ -480,7 +496,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                     float prob_old_left = 1.f, prob_old_right = 1.f;
                     if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
                         // get clue from direction of motion
-                        float direction_v = atan2(vx, -vy) * 180./CV_PI;
+                        float direction_v = atan2(vy, vx) * 180./CV_PI;
 
                         float diff_left = abs(direction_left - direction_v);
                         
@@ -552,16 +568,31 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                         while (human_direction < 0)
                             human_direction += 360;
                         while (human_direction >= 360)
-                            human_direction += 360;
+                            human_direction -= 360;
                         
-                        q_human.setRPY(0,0,human_direction*CV_PI/180. - CV_PI/2.);
+                        q_human.setRPY(0,0,human_direction*CV_PI/180.);
+                    }
+                    else {
+                        ROS_INFO("\t%.0f,%.0f-->%.2f,%.2f-->%d", direction_left, direction_right, prob_left, prob_right, human_direction);
                     }
                     
                     last_time_human = new_time;
                     return;
                 }
+                else {
+                    ROS_WARN("OB: %.2f, %.2f, %.2f", x_out, y_out, z_out);
+                }
+            }
+            else {
+                ROS_WARN("Rho too long: %.2f", rho);
             }
         }
+        else {
+            ROS_WARN("Wrong disparity: %.2f, %.2f", psi1, psi2);
+        }
+    }
+    else {
+        ROS_INFO("No match: %.2f, %.2f", beta1, beta2);
     }
 }
 
@@ -593,12 +624,47 @@ void Triangulator::update(void) {
     last_time_human = new_time;
 }
 
+void Triangulator::setLookup() {
+    for (int i = 0; i < 181; i++) {
+        float theta = i*CV_PI/360.;
+        thetaLookup[i] = theta;
+        rLookup1[i] = coeffs1[8] * theta + coeffs1[6] * pow(theta,3) + coeffs1[4] * pow(theta,5) + coeffs1[2] * pow(theta,7) + coeffs1[0] * pow(theta,9);
+        rLookup2[i] = coeffs2[8] * theta + coeffs2[6] * pow(theta,3) + coeffs2[4] * pow(theta,5) + coeffs2[2] * pow(theta,7) + coeffs2[0] * pow(theta,9);
+    }
+}
+
+float Triangulator::lookupTheta(float radius, int camNum) {
+    int i = 0;
+    if (camNum == 1) {
+        while (radius > rLookup1[i] && i < 180) {
+            i++;
+        }
+        if (i == 180)
+            return thetaLookup[180];
+        else
+            return thetaLookup[i] + ((radius-rLookup1[i])/(rLookup1[i+1]-rLookup1[i])) * CV_PI/360.;
+    }
+    else if (camNum == 2) {
+        while (radius > rLookup2[i] && i < 180) {
+            i++;
+        }
+        if (i == 180)
+            return thetaLookup[180];
+        else
+            return thetaLookup[i] + ((radius-rLookup2[i])/(rLookup2[i+1]-rLookup2[i])) * CV_PI/360.;
+    }
+    else {
+        ROS_ERROR("Invalid camera number, either 1 (for left) or 2 (for right)");
+        return -1;
+    }
+}
+
 int main (int argc, char **argv) {
-    double baseline = 3.8;
+    double baseline = 3.24;
     ros::init(argc, argv, "blimp_triangulator", ros::init_options::AnonymousName);
     ros::start();
     ros::Rate loop_rate(10);
-    Triangulator triangulator(3.8);
+    Triangulator triangulator(baseline);
     while(ros::ok()) {
         triangulator.update();
         ros::spinOnce();
