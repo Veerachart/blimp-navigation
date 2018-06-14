@@ -14,7 +14,7 @@ TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, boo
 													 0,0,1,0,
 													 0,0,0,1);
 	setIdentity(objectKF.measurementMatrix);
-	setIdentity(objectKF.processNoiseCov, Scalar::all(16.0));
+	setIdentity(objectKF.processNoiseCov, Scalar::all(25.0));
 	setIdentity(objectKF.measurementNoiseCov, Scalar::all(sdBody*sdBody));
 	setIdentity(objectKF.errorCovPost, Scalar::all(sdBody*sdBody));
 	objectKF.statePost = (Mat_<float>(4,1) << objDetection.center.x, objDetection.center.y, 0, 0);
@@ -26,7 +26,7 @@ TrackedObject::TrackedObject(RotatedRect objDetection, bool isHumanDetected, boo
 												   0,0,1,0,
 												   0,0,0,1);
 	setIdentity(headKF.measurementMatrix);
-	setIdentity(headKF.processNoiseCov, Scalar::all(16.0));
+	setIdentity(headKF.processNoiseCov, Scalar::all(25.0));
 	setIdentity(headKF.measurementNoiseCov, Scalar::all(sdHead*sdHead));
 	setIdentity(headKF.errorCovPost, Scalar::all(sdHead*sdHead));
 	if (isHumanDetected)

@@ -85,6 +85,8 @@ protected:
     float humanWidth;
     float m;            // camera's m (scaling from metric to pixel
     float k1;           // first coefficient in fisheye model
+
+    Mat circleMask;     // mask for marking the area that should be considered (eliminate flickering of codes in the corners)
 };
 
 #endif

@@ -89,13 +89,20 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
         Point2f head = tracked_humans[hum].getPointHead();
         point.x = head.x;
         point.y = head.y;
-        point.z = (float) tracked_humans[hum].getDirection();
+        //Point2f body = tracked_humans[hum].getPointBody();
+        //point.x = body.x;
+        //point.y = body.y;
+        point.z = 90.f - (float) tracked_humans[hum].getDirection() + tracked_humans[hum].getHeadROI().angle;
+        while (point.z >= 360.)
+            point.z -= 360.;
+        while (point.z < 0)
+            point.z += 360.;
         detected_points.points.push_back(point);
     }
-    polygon.header.stamp = ros::Time::now();
+    polygon.header.stamp = msg->header.stamp;
     polygon.polygon = detected_points;
     human_pub_.publish(polygon);
-    point_msg.header.stamp = ros::Time::now();
+    point_msg.header.stamp = msg->header.stamp;
     if (blimp_center != Point2f(0,0)) {
         point_msg.point.x = blimp_center.x;
         point_msg.point.y = blimp_center.y;
