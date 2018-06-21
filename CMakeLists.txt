@@ -19,6 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf
   tf_conversions
   dynamic_reconfigure
+  gpu_opencv
 )
 find_package( ZLIB REQUIRED )
 find_package( OpenCV REQUIRED )
@@ -155,6 +156,8 @@ add_executable(stream_file_node src/Streamer.cpp)
 
 add_executable(blimp_controller_node src/BlimpController.cpp)
 
+add_executable(visual_servo_node src/visual_servo.cpp)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -188,6 +191,10 @@ target_link_libraries(stream_file_node
 )
 
 target_link_libraries(blimp_controller_node
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(visual_servo_node
   ${catkin_LIBRARIES}
 )
 

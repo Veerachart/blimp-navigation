@@ -1,0 +1,61 @@
+<launch>
+    <group ns="blimp">
+        <include file="$(find gscam)/launch/cam_gs.launch" output="screen">
+            <arg name="VIEW" value="true"/>
+        </include>
+        
+        <include file="$(find gpu_opencv)/launch/faces.launch" output="screen">
+            <remap from="image" to="camera/image_raw"/>
+        </include>
+        
+        <node name="pid_ux" pkg="pid" type="controller">
+            <param name="Kp" value="0.5" />
+            <param name="Ki" value="0.0" />
+            <param name="Kd" value="0.0" />
+            <param name="upper_limit"  value="255.0" />
+            <param name="lower_limit"  value="-255.0" />
+            <param name="windup_limit" value="128.0" />
+            <param name="min_loop_frequency" value="15.0" />
+            <param name="max_loop_frequency" value="25.0" />
+            <param name="topic_from_controller" value="u_x" />
+            <param name="topic_from_plant" value="err_size" />
+            <remap from="setpoint" to="/setpoint_size" />
+        </node>
+        <node name="pid_uy" pkg="pid" type="controller">
+            <param name="Kp" value="100.0" />
+            <param name="Ki" value="0.0" />
+            <param name="Kd" value="0.0" />
+            <param name="upper_limit"  value="255.0" />
+            <param name="lower_limit"  value="-255.0" />
+            <param name="windup_limit" value="128.0" />
+            <param name="min_loop_frequency" value="15.0" />
+            <param name="max_loop_frequency" value="25.0" />
+            <param name="topic_from_controller" value="u_y" />
+            <param name="topic_from_plant" value="left_right" />
+            <remap from="setpoint" to="/setpoint_side" />
+        </node>
+        <node name="pid_uz" pkg="pid" type="controller">
+            <param name="Kp" value="-0.5" />
+            <param name="Ki" value="-0.0" />
+            <param name="Kd" value="-0.0" />
+            <param name="upper_limit"  value="255.0" />
+            <param name="lower_limit"  value="-255.0" />
+            <param name="windup_limit" value="128.0" />
+            <param name="min_loop_frequency" value="15.0" />
+            <param name="max_loop_frequency" value="25.0" />
+            <param name="topic_from_controller" value="u_z" />
+            <param name="topic_from_plant" value="err_y" />
+            <remap from="setpoint" to="/setpoint_z" />
+        </node>
+        
+        <node pkg="blimp_navigation" type="visual_servo_node" name="VSNode" />
+        
+        <node name="ble_blimp" pkg="ble_joy_controller" type="ble_pid_node.py" output="screen"> </node>
+    </group>
+    
+    <node pkg="rostopic" type="rostopic" name="set_x" args="pub /setpoint_size std_msgs/Float64 50.0" />
+    <node pkg="rostopic" type="rostopic" name="set_y" args="pub /setpoint_side std_msgs/Float64 0.0" />
+    <node pkg="rostopic" type="rostopic" name="set_z" args="pub /setpoint_z std_msgs/Float64 0.0" />
+    
+    <node name="dynamic_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>
+</launch>
