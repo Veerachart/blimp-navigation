@@ -18,7 +18,7 @@ bool compareContourAreas ( vector<Point> contour1, vector<Point> contour2 ) {
 }
 
 BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSave, bool _useFisheyeHOG) : f(_file){
-    area_threshold = 30;
+    area_threshold = 100;
     
     //logfile = new std::ofstream(buffer);
     //*logfile << "time,f1,f2,f3,ftot\n";
@@ -152,8 +152,8 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     pMOG2(input_img, fgMaskMOG2);
     fgMaskMOG2 &= circleMask;       // Mask the area outside the circle to remove flickering
     threshold(fgMaskMOG2, fgMaskMOG2, 128, 255, THRESH_BINARY);
-    //imshow("FG Mask MOG2", fgMaskMOG2);
-    imshow("Blimp Mask", img_thresholded_b);
+    imshow("FG all", fgMaskMOG2);
+    //imshow("Blimp Mask", img_thresholded_b);
     //outputVideo << save;
     
     //Mat intersect = img_thresholded_b & fgMaskMOG2;         // Blimp
@@ -166,7 +166,6 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     morphologyEx(intersect, intersect, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
 
     vector<vector<Point> > contours_blimp;
-    imshow("Blimp", intersect);
     findContours(intersect, contours_blimp, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
     
     RotatedRect blimp_bb;
@@ -181,14 +180,14 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
             drawContours(mask_blimp, hull, 0, Scalar(255), CV_FILLED);
         }
     }
-    //fgMaskMOG2 = fgMaskMOG2 & ~mask_blimp;
+    imshow("Blimp", mask_blimp);
+    fgMaskMOG2 = fgMaskMOG2 - mask_blimp;
                 
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_CLOSE, Mat::ones(5,5,CV_8U), Point(-1,-1), 2);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     
-    //imshow("For human detect", fgMaskMOG2);
     
     if (!detect_human)
         return false;
@@ -879,18 +878,28 @@ void BGSub::groupContours ( vector< vector<Point> > inputContours, vector<Rotate
     outputBoundingBoxes.clear();
     rawBoundingBoxes.clear();
     //int j;
-    for (vector< vector<Point> >::iterator it = inputContours.begin(); it != inputContours.end(); ++it) {
+    for (vector< vector<Point> >::iterator it = inputContours.begin(); it != inputContours.end(); ) {
         if (contourArea(*it) < area_threshold)          // Too small to be the seed
             break;
         vector<Point> contour_i = *it;
         RotatedRect rect_i = minAreaRect(contour_i);
         Point2f center_i = rect_i.center;
+        if (norm(center_i - img_center) > img_center.x - imgBorder - 30) {            // TODO Now HARDCODED for blimp detection
+            // Preventing some residue from blimp's color detection
+            it = inputContours.erase(it);
+            continue;
+        }
         Size h_size = getHumanSize(norm(center_i - img_center));
         vector< vector<Point> >::iterator it_j = it+1;
         while (it_j != inputContours.end()) {
             vector<Point> contour_j = *it_j;
             RotatedRect rect_j = minAreaRect(contour_j);
             Point2f center_j = rect_j.center;
+            if (norm(center_j - img_center) > img_center.x - imgBorder - 30) {        // TODO Now HARDCODED for blimp detection
+                // Preventing some residue from blimp's color detection
+                it_j = inputContours.erase(it_j);
+                continue;
+            }
             double d_ij = norm(center_i - center_j);        // Distance between 2 contours
             if (d_ij < h_size.height) {
                 contour_i.insert(contour_i.end(), contour_j.begin(), contour_j.end());
@@ -949,6 +958,7 @@ void BGSub::groupContours ( vector< vector<Point> > inputContours, vector<Rotate
         human_size.width = cvRound(1.5*human_size.width);
         human_size.height = 2*human_size.width;
         outputBoundingBoxes.push_back(RotatedRect(center, Size(max(w_aligned,float(human_size.width)), max(h_aligned,float(human_size.height))), theta));
+        ++it;
     }
     if (outputBoundingBoxes.size() > 1) {
         vector<RotatedRect>::iterator it_bb = outputBoundingBoxes.begin(), it_bb2;
@@ -977,134 +987,70 @@ void BGSub::groupContours ( vector< vector<Point> > inputContours, vector<Rotate
                 vector<Point2f> v, hull;
                 int ret = rotatedRectangleIntersection(r1,r2,v);
                 if (ret == INTERSECT_FULL) {
-                    if (area1 > area2) {
-                        rawBoundingBoxes.erase(rawBoundingBoxes.begin() + (it_bb2 - outputBoundingBoxes.begin()));
-                        it_bb2 = outputBoundingBoxes.erase(it_bb2);
-                        it_contour2 = inputContours.erase(it_contour2);
-                    }
-                    else {
-                        rawBoundingBoxes.erase(rawBoundingBoxes.begin() + (it_bb - outputBoundingBoxes.begin()));
-                        it_bb = outputBoundingBoxes.erase(it_bb);
-                        it_contour = inputContours.erase(it_contour);
-                        it_bb2 = it_bb + 1;
-                        contour_j = *it_contour2;
-                    }
+                    rawBoundingBoxes.erase(rawBoundingBoxes.begin() + (it_bb2 - outputBoundingBoxes.begin()));
+                    outputBoundingBoxes.erase(it_bb2);
+                    it_bb2 = it_bb + 1;
+                    inputContours.erase(it_contour2);
+                    it_contour2 = it_contour + 1;
                 }
                 else if (ret == INTERSECT_PARTIAL){
                     float intArea;
                     convexHull(v, hull);
                     intArea = contourArea(hull);
-                    if (area1 > area2) {
-                        if (intArea/area2 > 0.5) {
-                            contour_i.insert(contour_i.end(), contour_j.begin(), contour_j.end());
-                            RotatedRect rect = minAreaRect(contour_i);
-                            Point2f center = rect.center;
-                            float w = rect.size.width;
-                            float h = rect.size.height;
-                            float phi = rect.angle;
-                            rawBoundingBoxes[it_bb-outputBoundingBoxes.begin()] = rect;
-                            float theta = atan2(center.x - img_center.x, img_center.y - center.y) *180./CV_PI;
-                            if (w <= h) {
-                                if (phi - theta > 90.)
-                                    phi -= 180.;
-                                else if (phi - theta < -90.)
-                                    phi += 180.;
-                            }
-                            else {
-                                float temp = w;
-                                w = h;
-                                h = temp;
-                                if (phi - theta > 0.)
-                                    phi -= 90.;
-                                else if (phi - theta < -180.)
-                                    phi += 270;
-                                else
-                                    phi += 90.;
-                            }
-                            float delta = abs(phi - theta) * CV_PI/180.;
-                            if (delta > CV_PI/2.) {            // width < height --> 90 deg change
-                                float temp = w;
-                                w = h;
-                                h = temp;
-                                delta -= CV_PI/2.;
-                            }
-                            float w_aligned = h*sin(delta) + w*cos(delta);
-                            w_aligned *= 1.5;
-                            float h_aligned = h*cos(delta) + w*sin(delta);
-                            h_aligned *= 1.5;
-
-                            //Size human_size = getHumanSize(norm(center - img_center)) + Size(10,20);
-                            Size human_size = getHumanSize(norm(center - img_center));
-                            human_size.width = cvRound(1.5*human_size.width);
-                            human_size.height = 2*human_size.width;
-                            r1 = RotatedRect(center, Size(max(w_aligned,float(human_size.width)), max(h_aligned,float(human_size.height))), theta);
-                            *it_bb = r1;
-                            area1 = r1.size.area();
-                            rawBoundingBoxes.erase(rawBoundingBoxes.begin() + (it_bb2 - outputBoundingBoxes.begin()));
-                            it_bb2 = outputBoundingBoxes.erase(it_bb2);
-                            it_contour2 = inputContours.erase(it_contour2);
+                    if (intArea/fmin(area1, area2) > 0.5) {
+                        contour_i.insert(contour_i.end(), contour_j.begin(), contour_j.end());
+                        RotatedRect rect = minAreaRect(contour_i);
+                        Point2f center = rect.center;
+                        float w = rect.size.width;
+                        float h = rect.size.height;
+                        float phi = rect.angle;
+                        rawBoundingBoxes[it_bb-outputBoundingBoxes.begin()] = rect;
+                        float theta = atan2(center.x - img_center.x, img_center.y - center.y) *180./CV_PI;
+                        if (w <= h) {
+                            if (phi - theta > 90.)
+                                phi -= 180.;
+                            else if (phi - theta < -90.)
+                                phi += 180.;
                         }
                         else {
-                            it_bb2++;
-                            it_contour2++;
+                            float temp = w;
+                            w = h;
+                            h = temp;
+                            if (phi - theta > 0.)
+                                phi -= 90.;
+                            else if (phi - theta < -180.)
+                                phi += 270;
+                            else
+                                phi += 90.;
                         }
+                        float delta = abs(phi - theta) * CV_PI/180.;
+                        if (delta > CV_PI/2.) {            // width < height --> 90 deg change
+                            float temp = w;
+                            w = h;
+                            h = temp;
+                            delta -= CV_PI/2.;
+                        }
+                        float w_aligned = h*sin(delta) + w*cos(delta);
+                        w_aligned *= 1.5;
+                        float h_aligned = h*cos(delta) + w*sin(delta);
+                        h_aligned *= 1.5;
+
+                        //Size human_size = getHumanSize(norm(center - img_center)) + Size(10,20);
+                        Size human_size = getHumanSize(norm(center - img_center));
+                        human_size.width = cvRound(1.5*human_size.width);
+                        human_size.height = 2*human_size.width;
+                        r1 = RotatedRect(center, Size(max(w_aligned,float(human_size.width)), max(h_aligned,float(human_size.height))), theta);
+                        *it_bb = r1;
+                        area1 = r1.size.area();
+                        rawBoundingBoxes.erase(rawBoundingBoxes.begin() + (it_bb2 - outputBoundingBoxes.begin()));
+                        outputBoundingBoxes.erase(it_bb2);
+                        it_bb2 = it_bb + 1;
+                        inputContours.erase(it_contour2);
+                        it_contour2 = it_contour + 1;
                     }
                     else {
-                        if (intArea/area1 > 0.5) {
-                            contour_j.insert(contour_j.end(), contour_i.begin(), contour_i.end());
-                            RotatedRect rect = minAreaRect(contour_j);
-                            Point2f center = rect.center;
-                            float w = rect.size.width;
-                            float h = rect.size.height;
-                            float phi = rect.angle;
-                            rawBoundingBoxes[it_bb2-outputBoundingBoxes.begin()] = rect;
-                            float theta = atan2(center.x - img_center.x, img_center.y - center.y) *180./CV_PI;
-                            if (w <= h) {
-                                if (phi - theta > 90.)
-                                    phi -= 180.;
-                                else if (phi - theta < -90.)
-                                    phi += 180.;
-                            }
-                            else {
-                                float temp = w;
-                                w = h;
-                                h = temp;
-                                if (phi - theta > 0.)
-                                    phi -= 90.;
-                                else if (phi - theta < -180.)
-                                    phi += 270;
-                                else
-                                    phi += 90.;
-                            }
-                            float delta = abs(phi - theta) * CV_PI/180.;
-                            if (delta > CV_PI/2.) {            // width < height --> 90 deg change
-                                float temp = w;
-                                w = h;
-                                h = temp;
-                                delta -= CV_PI/2.;
-                            }
-                            float w_aligned = h*sin(delta) + w*cos(delta);
-                            w_aligned *= 1.5;
-                            float h_aligned = h*cos(delta) + w*sin(delta);
-                            h_aligned *= 1.5;
-
-                            //Size human_size = getHumanSize(norm(center - img_center)) + Size(10,20);
-                            Size human_size = getHumanSize(norm(center - img_center));
-                            human_size.width = cvRound(1.5*human_size.width);
-                            human_size.height = 2*human_size.width;
-                            r2 = RotatedRect(center, Size(max(w_aligned,float(human_size.width)), max(h_aligned,float(human_size.height))), theta);
-                            *it_bb2 = r2;
-                            area2 = r2.size.area();
-                            rawBoundingBoxes.erase(rawBoundingBoxes.begin() + (it_bb - outputBoundingBoxes.begin()));
-                            it_bb = outputBoundingBoxes.erase(it_bb);
-                            it_contour = inputContours.erase(it_contour);
-                            it_bb2 = it_bb + 1;
-                            it_contour = it_contour + 1;
-                        }
-                        else {
-                            it_bb2++;
-                            it_contour2++;
-                        }
+                        it_bb2++;
+                        it_contour2++;
                     }
                 }
                 else {
@@ -1114,7 +1060,7 @@ void BGSub::groupContours ( vector< vector<Point> > inputContours, vector<Rotate
             }
             it_bb++;
             it_contour++;
-            if (outputBoundingBoxes.size() == 1)
+            if (outputBoundingBoxes.size() == 1 || it_bb == outputBoundingBoxes.end())
                 break;
         }
     }
