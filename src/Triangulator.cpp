@@ -10,6 +10,17 @@
 using namespace geometry_msgs;
 using namespace cv;
 
+struct HeadTrack {
+    KalmanFilter kf;
+    ros::Time last_time;
+    Mat sds_human;
+    Mat sd_rotation_human_t;
+    Mat sd_rotation_human;
+    int human_direction;
+
+    int i, j;           // Just for checking in the creating track process
+};
+
 class Triangulator {
 public:
     Triangulator(float _baseline=1.);
@@ -36,10 +47,6 @@ protected:
     KalmanFilter kf_blimp;
     bool is_tracking;
     
-    KalmanFilter kf_human;
-    bool is_tracking_human;
-    int human_direction;
-    
     float coeffs1[9], coeffs2[9];
     Mat R1, R2;
     float mu1, mv1, u01, v01, m1;
@@ -54,11 +61,15 @@ protected:
     ros::Time last_time;
     ros::Time last_time_human;
 
+    vector<HeadTrack> trackers;
+
     float rLookup1[181], rLookup2[181];
     float thetaLookup[181];
 
     void setLookup();
     float lookupTheta(float radius, int camNum);
+
+    HeadTrack createNewTrack(float x, float y, float z, Mat var);
 };
 
 Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_center", 1),
@@ -79,18 +90,13 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     q.setRPY(0,0,0);
     transform.setRotation(q);
     
-    is_tracking_human = false;
-    human_direction = -1;
-    kf_human = KalmanFilter(6,3,0);
     q_human.setRPY(0,0,0);
     transform_human.setRotation(q_human);
     
     setIdentity(kf_blimp.measurementMatrix);
-    setIdentity(kf_human.measurementMatrix);
     const Mat d = (Mat_<float>(1,6)<< 0.0009,0.0009,0.0009,0.0025,0.0025,0.0025);
     kf_blimp.processNoiseCov = Mat::diag(d);
     const Mat d2 = (Mat_<float>(1,6)<< 0.04,0.04,0.04,0.04,0.04,0.04);
-    kf_human.processNoiseCov = Mat::diag(d2);
     // Parameters of two cameras
     coeffs1[0] = -0.003125;
     coeffs1[2] =  0.001029;
@@ -128,6 +134,7 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
 }
 
 void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, const PointStampedConstPtr& point_right) {
+    return;
     ros::Time new_time;
     if (point_left->header.stamp - point_right->header.stamp > ros::Duration(0) )     // left after
         new_time = point_left->header.stamp;
@@ -328,452 +335,589 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
     float psi2,beta2;
     Mat u_cam, rect_r;
     
-    // cam1
-    x = (heads_left->polygon.points[0].x-u01)/mu1;
-    y = (heads_left->polygon.points[0].y-v01)/mv1;
-    phi = atan2(y,x);
-    r = sqrt(x*x + y*y);
-    //theta = r/coeffs1[8];         // Linear r = k\theta
-    theta = lookupTheta(r, 1);      // Or interpolation from the lookup table
-    if (theta < 0 || theta > CV_PI/2) {
-        ROS_INFO("Bad theta");
-        return;
+    vector<float> Psis1, Betas1;
+    vector<float> Psis2, Betas2;
+    vector<Mat> Vars1, Vars2;
+
+    // Cam1
+    for (int p = 0; p < heads_left->polygon.points.size(); p++) {
+        x = (heads_left->polygon.points[p].x-u01)/mu1;
+        y = (heads_left->polygon.points[p].y-v01)/mv1;
+        phi = atan2(y,x);
+        r = sqrt(x*x + y*y);
+        //theta = r/coeffs1[8];         // Linear r = k\theta
+        theta = lookupTheta(r, 1);      // Or interpolation from the lookup table
+        if (theta < 0 || theta > CV_PI/2) {
+            ROS_INFO("Bad theta");
+            Psis1.push_back(CV_PI);
+            Betas1.push_back(CV_PI);
+            Vars1.push_back(Mat::zeros(2,2,CV_32FC1));
+            continue;
+        }
+        float c_theta1 = cos(theta),
+              s_theta1 = sin(theta),
+              c_phi1   = cos(phi),
+              s_phi1   = sin(phi);
+
+        u_cam = (Mat_<float>(3,1) << s_theta1*c_phi1, s_theta1*s_phi1, c_theta1);
+        rect_r = R1*u_cam;
+        psi1 = asin(rect_r.at<float>(0,0));
+        beta1 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
+
+        //float J_theta1 = coeffs1[8];    // Linear
+        float J_theta1 = coeffs1[8] + coeffs1[6] * pow(theta,2) + coeffs1[4] * pow(theta,4) + coeffs1[2] * pow(theta,6) + coeffs1[0] * pow(theta,8);        // Full model
+        Mat var_theta_phi1 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m1*m1*J_theta1*J_theta1), 0.,
+                                                  0., sigma_u*sigma_u/(m1*m1*r*r));
+
+        float c_psi1   = cos(psi1),
+              s_psi1   = sin(psi1),
+              c_beta1  = cos(beta1),
+              s_beta1  = sin(beta1);
+
+        Mat J_ucam1 = (Mat_<float>(3,2) << c_theta1*c_phi1, -s_theta1*s_phi1,
+                                           c_theta1*s_phi1,  s_theta1*c_phi1,
+                                          -s_theta1,         0);
+
+        Mat var_ucam1 = J_ucam1 * var_theta_phi1 * J_ucam1.t();
+
+        Mat var_R1 = R1 * var_ucam1 * R1.t();
+
+        Mat J_beta_psi1 = (Mat_<float>(2,3) << c_psi1, -s_psi1*s_beta1,        -s_psi1*c_beta1,
+                                               0,       c_beta1/(c_psi1+1e-6), -s_beta1/(c_psi1+1e-6));
+
+        Mat var_beta_psi1 = J_beta_psi1*var_R1*J_beta_psi1.t();
+
+        Psis1.push_back(psi1);
+        Betas1.push_back(beta1);
+        Vars1.push_back(var_beta_psi1);
     }
-    float c_theta1 = cos(theta), 
-          s_theta1 = sin(theta),
-          c_phi1   = cos(phi), 
-          s_phi1   = sin(phi);
-    
-    u_cam = (Mat_<float>(3,1) << s_theta1*c_phi1, s_theta1*s_phi1, c_theta1);
-    rect_r = R1*u_cam;
-    psi1 = asin(rect_r.at<float>(0,0));
-    beta1 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
-    
-    //float J_theta1 = coeffs1[8];    // Linear
-    float J_theta1 = coeffs1[8] + coeffs1[6] * pow(theta,2) + coeffs1[4] * pow(theta,4) + coeffs1[2] * pow(theta,6) + coeffs1[0] * pow(theta,8);        // Full model
-    Mat var_theta_phi1 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m1*m1*J_theta1*J_theta1), 0.,
-                                              0., sigma_u*sigma_u/(m1*m1*r*r));
-    
-    float c_psi1   = cos(psi1), 
-          s_psi1   = sin(psi1), 
-          c_beta1  = cos(beta1), 
-          s_beta1  = sin(beta1);
-          
-    Mat J_ucam1 = (Mat_<float>(3,2) << c_theta1*c_phi1, -s_theta1*s_phi1,
-                                       c_theta1*s_phi1,  s_theta1*c_phi1,
-                                      -s_theta1,         0);
-    
-    Mat var_ucam1 = J_ucam1 * var_theta_phi1 * J_ucam1.t();
-    
-    Mat var_R1 = R1 * var_ucam1 * R1.t();
-    
-    Mat J_beta_psi1 = (Mat_<float>(2,3) << c_psi1, -s_psi1*s_beta1,        -s_psi1*c_beta1,
-                                           0,       c_beta1/(c_psi1+1e-6), -s_beta1/(c_psi1+1e-6));
-                                           
-    Mat var_beta_psi1 = J_beta_psi1*var_R1*J_beta_psi1.t();
     
     // Cam2
-    x = (heads_right->polygon.points[0].x-u02)/mu2;
-    y = (heads_right->polygon.points[0].y-v02)/mv2;
-    phi = atan2(y,x);
-    r = sqrt(x*x + y*y);
-    //theta = r/coeffs2[8];         // Linear r = k\theta
-    theta = lookupTheta(r, 2);      // Or interpolation from the lookup table
-    if (theta < 0 || theta > CV_PI/2) {
-        ROS_INFO("Bad theta");
-        return;
+    for (int p = 0; p < heads_right->polygon.points.size(); p++) {
+        x = (heads_right->polygon.points[0].x-u02)/mu2;
+        y = (heads_right->polygon.points[0].y-v02)/mv2;
+        phi = atan2(y,x);
+        r = sqrt(x*x + y*y);
+        //theta = r/coeffs2[8];         // Linear r = k\theta
+        theta = lookupTheta(r, 2);      // Or interpolation from the lookup table
+        if (theta < 0 || theta > CV_PI/2) {
+            ROS_INFO("Bad theta");
+            Psis1.push_back(CV_PI);
+            Betas1.push_back(CV_PI);
+            Vars1.push_back(Mat::zeros(2,2,CV_32FC1));
+            continue;
+        }
+
+        float c_theta2 = cos(theta),
+              s_theta2 = sin(theta),
+              c_phi2   = cos(phi),
+              s_phi2   = sin(phi);
+
+        u_cam = (Mat_<float>(3,1) << s_theta2*c_phi2, s_theta2*s_phi2, c_theta2);
+        rect_r = R2*u_cam;
+        psi2 = asin(rect_r.at<float>(0,0));
+        beta2 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
+
+        //float J_theta2 = coeffs2[8];    // Linear
+        float J_theta2 = coeffs2[8] + coeffs2[6] * pow(theta,2) + coeffs2[4] * pow(theta,4) + coeffs2[2] * pow(theta,6) + coeffs2[0] * pow(theta,8);        // Full model
+        Mat var_theta_phi2 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m2*m2*J_theta2*J_theta2), 0.,
+                                                  0., sigma_u*sigma_u/(m2*m2*r*r));
+
+        float c_psi2   = cos(psi2),
+              s_psi2   = sin(psi2),
+              c_beta2  = cos(beta2),
+              s_beta2  = sin(beta2);
+
+        Mat J_ucam2 = (Mat_<float>(3,2) << c_theta2*c_phi2, -s_theta2*s_phi2,
+                                           c_theta2*s_phi2,  s_theta2*c_phi2,
+                                          -s_theta2,         0);
+
+        Mat var_ucam2 = J_ucam2*var_theta_phi2 * J_ucam2.t();
+
+        Mat var_R2 = R2*var_ucam2*R2.t();
+
+        Mat J_beta_psi2 = (Mat_<float>(2,3) << c_psi2, -s_psi2*s_beta2,        -s_psi2*c_beta2,
+                                               0,       c_beta2/(c_psi2+1e-6), -s_beta2/(c_psi2+1e-6));
+
+        Mat var_beta_psi2 = J_beta_psi2*var_R2*J_beta_psi2.t();
+
+        Psis2.push_back(psi2);
+        Betas2.push_back(beta2);
+        Vars2.push_back(var_beta_psi2);
     }
     
-    float c_theta2 = cos(theta), 
-          s_theta2 = sin(theta),
-          c_phi2   = cos(phi), 
-          s_phi2   = sin(phi);
-    
-    u_cam = (Mat_<float>(3,1) << s_theta2*c_phi2, s_theta2*s_phi2, c_theta2);
-    rect_r = R2*u_cam;
-    psi2 = asin(rect_r.at<float>(0,0));
-    beta2 = atan2(rect_r.at<float>(1,0), rect_r.at<float>(2,0));
-    
-    //float J_theta2 = coeffs2[8];    // Linear
-    float J_theta2 = coeffs2[8] + coeffs2[6] * pow(theta,2) + coeffs2[4] * pow(theta,4) + coeffs2[2] * pow(theta,6) + coeffs2[0] * pow(theta,8);        // Full model
-    Mat var_theta_phi2 = (Mat_<float>(2,2) << sigma_u*sigma_u/(m2*m2*J_theta2*J_theta2), 0.,
-                                              0., sigma_u*sigma_u/(m2*m2*r*r));
-    
-    float c_psi2   = cos(psi2), 
-          s_psi2   = sin(psi2), 
-          c_beta2  = cos(beta2), 
-          s_beta2  = sin(beta2);
-          
-    Mat J_ucam2 = (Mat_<float>(3,2) << c_theta2*c_phi2, -s_theta2*s_phi2,
-                                       c_theta2*s_phi2,  s_theta2*c_phi2,
-                                      -s_theta2,         0);
-    
-    Mat var_ucam2 = J_ucam2*var_theta_phi2 * J_ucam2.t();
-    
-    Mat var_R2 = R2*var_ucam2*R2.t();
-    
-    Mat J_beta_psi2 = (Mat_<float>(2,3) << c_psi2, -s_psi2*s_beta2,        -s_psi2*c_beta2,
-                                           0,       c_beta2/(c_psi2+1e-6), -s_beta2/(c_psi2+1e-6));
-                                           
-    Mat var_beta_psi2 = J_beta_psi2*var_R2*J_beta_psi2.t();
-    
     ////////////////////////
-    float disparity = psi1-psi2;
-    
-    if(fabs(beta1 - beta2) < 0.2) {        // On the same epipolar line
-        if(disparity > 0) {
-            float rho = baseline*c_psi2/sin(disparity);
-            if (rho <= 10.) {
-                float s_disp = sin(disparity), c_disp = cos(disparity);
-                float x_out, y_out, z_out;
-                x_out = rho*s_psi1;
-                y_out = rho*c_psi1*s_beta1;
-                z_out = rho*c_psi1*c_beta1;
-                
-                if (z_out >  0. && z_out < 3.5 &&
-                    x_out >-2.5 && x_out < 6.  &&
-                    y_out > -4. && y_out < 4.) {        // within the area
-                    // calculate variance
-                    Mat var_combi = Mat::zeros(4,4,CV_32FC1);
-                    Mat aux = var_combi.colRange(0,2).rowRange(0,2);
-                    var_beta_psi1.copyTo(aux);
-                    aux = var_combi.colRange(2,4).rowRange(2,4);
-                    var_beta_psi2.copyTo(aux);
-                    
-                    Mat J_p = Mat::zeros(3,4,CV_32FC1);
-                    Mat temp = -baseline*c_psi2/s_disp *
-                        (Mat_<float> (3,1) << -s_psi1*c_disp/s_disp + c_psi1,
-                        -s_beta1*(c_psi1*c_disp/s_disp + s_psi1),
-                        -c_beta1*(c_psi1*c_disp/s_disp + s_psi1));
-                    temp.copyTo(J_p.col(0));
-                    
-                    temp = baseline*c_psi2/s_disp * 
-                    (Mat_<float>(3,1) << 0, c_psi1*c_beta1, -c_psi1*s_beta1);
-                    temp.copyTo(J_p.col(1));
-                    
-                    temp = baseline*(c_psi2*c_disp/(s_disp*s_disp) - s_psi2/s_disp) * 
-                    (Mat_<float>(3,1) << s_psi1, c_psi1*s_beta1, c_psi1*c_beta1);
-                    temp.copyTo(J_p.col(2));
-                    
-                    Mat var_p = J_p * var_combi * J_p.t();
-                    
-                    // use it to correct Kalman filter
-                    if (is_tracking_human) {          // Already tracking something
-                        // Check closeness to the tracked object
-                        Mat measurement = (Mat_<float> (3,1) << x_out, y_out, z_out);
-                        //std::cout << (measurement - kf_blimp.measurementMatrix*kf_blimp.statePost) << std::endl;
-                        Mat x = sd_rotation_human*(measurement - kf_human.measurementMatrix*kf_human.statePost);
-                        //std::cout << "\t" << sds.t() << std::endl;
-                        if (fabs(x.at<float>(0,0)) < 3*sds.at<float>(0,0) &&
-                            fabs(x.at<float>(1,0)) < 3*sds.at<float>(1,0) &&
-                            fabs(x.at<float>(2,0)) < 3*sds.at<float>(2,0)) {
-                            // within 3 SD in all directions
-                            kf_human.measurementNoiseCov = var_p;
-                            kf_human.correct(measurement);
-                            SVD::compute(kf_human.errorCovPost.colRange(0,3).rowRange(0,3), sds_human, sd_rotation_human, sd_rotation_human_t);
-                        }
-                        else {
-                            ROS_INFO("Outside 3SD");
-                        }
-                    }
-                    else {                      // Begin track;
-                        kf_human.statePost = (Mat_<float>(6,1) << x_out, y_out, z_out, 0., 0., 0.);
-                        setIdentity(kf_human.errorCovPost);
-                        var_p.copyTo(kf_human.errorCovPost.colRange(0,3).rowRange(0,3));        // Set variance of x,y,z as computed, leave it to diag(1) for velocity
-                        SVD::compute(var_p, sds_human, sd_rotation_human, sd_rotation_human_t);
-                        is_tracking_human = true;
-                        ROS_INFO("Started tracking");
-                    }
-                    
-                    // direction calculation
-                    float direction_left = heads_left->polygon.points[0].z;
-                    float direction_right = heads_right->polygon.points[0].z;
-                    
-                    float vx = kf_human.statePost.at<float>(3,0);
-                    float vy = kf_human.statePost.at<float>(4,0);
-                    
-                    float prob_v_left = 1.f, prob_v_right = 1.f;
-                    float prob_old_left = 1.f, prob_old_right = 1.f;
-                    if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
-                        // get clue from direction of motion
-                        float direction_v = atan2(vy, vx) * 180./CV_PI;
+    bool matched;
+    vector<bool> usedTracks(trackers.size(), false);
+    vector<bool> usedLeft(Psis1.size(), false);
+    vector<bool> usedRight(Psis2.size(), false);
+    vector<HeadTrack> waitingList;
 
-                        float diff_left = abs(direction_left - direction_v);
-                        
-                        if (diff_left > 180)
-                            diff_left = 360 - diff_left;
-                        
-                        if (diff_left <= 90)
-                            prob_v_left = exp(-diff_left*diff_left/(2*30.*30.));
-                        else
-                            prob_v_left = 0;
+    int human_direction;
 
-                        float diff_right = abs(direction_right - direction_v);
+    for (int i = 0; i < Psis1.size(); i++) {
+        psi1 = Psis1[i];
+        beta1 = Betas1[i];
+        if (psi1 == CV_PI && beta1 == CV_PI)
+            continue;               // Bad theta case
+        matched = false;
+        Mat var_beta_psi1 = Vars1[i];
+
+        float c_psi1 = cos(psi1);
+        float s_psi1 = sin(psi1);
+        float c_beta1 = cos(beta1);
+        float s_beta1 = sin(beta1);
+
+        for (int j = 0; j < Psis2.size(); j++) {
+            if (usedRight[j])
+                continue;
+            psi2 = Psis2[j];
+            beta2 = Betas2[j];
+            if (psi2 == CV_PI && beta2 == CV_PI)
+                continue;               // Bad theta case
+            Mat var_beta_psi2 = Vars2[j];
+
+            float c_psi2 = cos(psi2);
+            float s_psi2 = sin(psi2);
+            float c_beta2 = cos(beta2);
+            float s_beta2 = sin(beta2);
+
+            float disparity = psi1-psi2;
+
+            if(fabs(beta1 - beta2) < 0.2) {        // On the same epipolar line
+                if(disparity > 0) {
+                    float rho = baseline*c_psi2/sin(disparity);
+                    if (rho <= 10.) {
+                        float s_disp = sin(disparity), c_disp = cos(disparity);
+                        float x_out, y_out, z_out;
+                        x_out = rho*s_psi1;
+                        y_out = rho*c_psi1*s_beta1;
+                        z_out = rho*c_psi1*c_beta1;
                         
-                        if (diff_right > 180)
-                            diff_right = 360 - diff_right;
-                        
-                        if (diff_right <= 90)
-                            prob_v_right = exp(-diff_right*diff_right/(2*30.*30.));           // P(velocity) * P(old direction)
-                        else
-                            prob_v_right = 0;
-                    }
-                    
-                    if (human_direction >= 0) {         // Already tracking direction
-                        float diff_old = abs(direction_left - human_direction);
-                        if (diff_old > 180)
-                            diff_old = 360 - diff_old;
-                        prob_old_left = exp(-diff_old*diff_old/(2*15.*15.));
-                        diff_old = abs(direction_right - human_direction);
-                        if (diff_old > 180)
-                            diff_old = 360 - diff_old;
-                        prob_old_right = exp(-diff_old*diff_old/(2*15.*15.));
-                    }
-                    
-                    float prob_left = prob_v_left * prob_old_left;
-                    float prob_right = prob_v_right * prob_old_right;
-                    
-                    float d_l, d_r, direction_new;
-                    if (prob_left + prob_right > 0) {
-                        if (human_direction >= 0) {         // Merge with previous
-                            if (direction_left - human_direction > 180)
-                                d_l = direction_left - 360;
-                            else if (human_direction - direction_left > 180)
-                                d_l = direction_left + 360;
-                            else
-                                d_l = direction_left;
-                            
-                            if (direction_right - human_direction > 180)
-                                d_r = direction_right - 360;
-                            else if (human_direction - direction_right > 180)
-                                d_r = direction_right + 360;
-                            else
-                                d_r = direction_right;
-                            
-                            direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);
-                            human_direction = (int) round((human_direction + direction_new)/2.);
+                        if (z_out >  0. && z_out < 3.5 &&
+                            x_out >-2.5 && x_out < 6.  &&
+                            y_out > -4. && y_out < 4.) {        // within the area
+                            matched = true;
+                            // calculate variance
+                            Mat var_combi = Mat::zeros(4,4,CV_32FC1);
+                            Mat aux = var_combi.colRange(0,2).rowRange(0,2);
+                            var_beta_psi1.copyTo(aux);
+                            aux = var_combi.colRange(2,4).rowRange(2,4);
+                            var_beta_psi2.copyTo(aux);
+
+                            Mat J_p = Mat::zeros(3,4,CV_32FC1);
+                            Mat temp = -baseline*c_psi2/s_disp *
+                                (Mat_<float> (3,1) << -s_psi1*c_disp/s_disp + c_psi1,
+                                -s_beta1*(c_psi1*c_disp/s_disp + s_psi1),
+                                -c_beta1*(c_psi1*c_disp/s_disp + s_psi1));
+                            temp.copyTo(J_p.col(0));
+
+                            temp = baseline*c_psi2/s_disp *
+                            (Mat_<float>(3,1) << 0, c_psi1*c_beta1, -c_psi1*s_beta1);
+                            temp.copyTo(J_p.col(1));
+
+                            temp = baseline*(c_psi2*c_disp/(s_disp*s_disp) - s_psi2/s_disp) *
+                            (Mat_<float>(3,1) << s_psi1, c_psi1*s_beta1, c_psi1*c_beta1);
+                            temp.copyTo(J_p.col(2));
+
+                            Mat var_p = J_p * var_combi * J_p.t();
+
+                            int t = 0;
+                            for (; t < trackers.size(); t++) {
+                                if (usedTracks[t])
+                                    continue;
+                                vector<HeadTrack>::iterator ptr = trackers.begin() + t;
+                                // Check closeness to the tracked object
+                                Mat measurement = (Mat_<float> (3,1) << x_out, y_out, z_out);
+                                Mat x = (ptr->sd_rotation_human)*(measurement - (ptr->kf.measurementMatrix)*(ptr->kf.statePost));
+                                if (fabs(x.at<float>(0,0)) < 3*ptr->sds_human.at<float>(0,0) &&
+                                    fabs(x.at<float>(1,0)) < 3*ptr->sds_human.at<float>(1,0) &&
+                                    fabs(x.at<float>(2,0)) < 3*ptr->sds_human.at<float>(2,0)) {
+                                    // within 3 SD in all directions
+                                    for (vector<HeadTrack>::iterator w = waitingList.begin(); w != waitingList.end(); ) {
+                                        // check with those in the waiting list if they have been included
+                                        if (w->i == i or w->j == j) {
+                                            w = waitingList.erase(w);
+                                            //ROS_INFO("waitingList -1");
+                                        }
+                                        else
+                                            w++;
+                                    }
+                                    ptr->kf.measurementNoiseCov = var_p;
+                                    ptr->kf.correct(measurement);
+                                    SVD::compute(ptr->kf.errorCovPost.colRange(0,3).rowRange(0,3), ptr->sds_human, ptr->sd_rotation_human, ptr->sd_rotation_human_t);
+                                    usedTracks[t] = true;
+                                    usedLeft[j] = true;
+                                    usedRight[j] = true;
+                                    ptr->last_time = new_time;
+
+                                    // direction calculation
+                                    human_direction = ptr->human_direction;
+
+                                    float direction_left = heads_left->polygon.points[i].z;
+                                    float direction_right = heads_right->polygon.points[j].z;
+
+                                    float vx = ptr->kf.statePost.at<float>(3,0);
+                                    float vy = ptr->kf.statePost.at<float>(4,0);
+
+                                    float prob_v_left = 1.f, prob_v_right = 1.f;
+                                    float prob_old_left = 1.f, prob_old_right = 1.f;
+                                    if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
+                                        // get clue from direction of motion
+                                        float direction_v = atan2(vy, vx) * 180./CV_PI;
+
+                                        float diff_left = abs(direction_left - direction_v);
+
+                                        if (diff_left > 180)
+                                            diff_left = 360 - diff_left;
+
+                                        if (diff_left <= 90)
+                                            prob_v_left = exp(-diff_left*diff_left/(2*30.*30.));
+                                        else
+                                            prob_v_left = 0;
+
+                                        float diff_right = abs(direction_right - direction_v);
+
+                                        if (diff_right > 180)
+                                            diff_right = 360 - diff_right;
+
+                                        if (diff_right <= 90)
+                                            prob_v_right = exp(-diff_right*diff_right/(2*30.*30.));           // P(velocity) * P(old direction)
+                                        else
+                                            prob_v_right = 0;
+                                    }
+
+
+                                    float diff_old = abs(direction_left - human_direction);
+                                    if (diff_old > 180)
+                                        diff_old = 360 - diff_old;
+                                    prob_old_left = exp(-diff_old*diff_old/(2*15.*15.));
+                                    diff_old = abs(direction_right - human_direction);
+                                    if (diff_old > 180)
+                                        diff_old = 360 - diff_old;
+                                    prob_old_right = exp(-diff_old*diff_old/(2*15.*15.));
+
+                                    float prob_left = prob_v_left * prob_old_left;
+                                    float prob_right = prob_v_right * prob_old_right;
+
+                                    float d_l, d_r, direction_new;
+                                    if (prob_left + prob_right > 0) {
+                                        if (direction_left - human_direction > 180)
+                                            d_l = direction_left - 360;
+                                        else if (human_direction - direction_left > 180)
+                                            d_l = direction_left + 360;
+                                        else
+                                            d_l = direction_left;
+
+                                        if (direction_right - human_direction > 180)
+                                            d_r = direction_right - 360;
+                                        else if (human_direction - direction_right > 180)
+                                            d_r = direction_right + 360;
+                                        else
+                                            d_r = direction_right;
+
+                                        direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);
+                                        human_direction = (int) round((human_direction + direction_new)/2.);
+                                        while (human_direction < 0)
+                                            human_direction += 360;
+                                        while (human_direction >= 360)
+                                            human_direction -= 360;
+                                        ptr->human_direction = human_direction;
+                                    }
+                                    break;
+                                }
+                                /*else {
+                                    ROS_INFO("Outside SD: %.4f, %.4f, %.4f", ptr->sds_human.at<float>(0,0), ptr->sds_human.at<float>(1,0), ptr->sds_human.at<float>(2,0));
+                                }*/
+                            }
+
+                            if (t == trackers.size()) {
+                                // Already run through the loop without any match
+                                HeadTrack newTrack = createNewTrack(x_out, y_out, z_out, var_p);
+                                newTrack.i = i;
+                                newTrack.j = j;
+                                newTrack.last_time = new_time;
+
+                                // direction calculation
+                                float direction_left = heads_left->polygon.points[i].z;
+                                float direction_right = heads_right->polygon.points[j].z;
+
+                                float prob_v_left = 1.f, prob_v_right = 1.f;
+                                float prob_old_left = 1.f, prob_old_right = 1.f;
+
+                                float prob_left = prob_v_left * prob_old_left;
+                                float prob_right = prob_v_right * prob_old_right;
+
+                                float d_l, d_r, direction_new;
+                                if (prob_left + prob_right > 0) {
+                                    d_l = direction_left;
+                                    if (direction_right - direction_left > 180)
+                                        d_r = direction_right - 360;
+                                    else if (direction_left - direction_right > 180)
+                                        d_r = direction_right + 360;
+                                    else
+                                        d_r = direction_right;
+
+                                    direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);
+                                    newTrack.human_direction = (int) round(direction_new);
+                                    while (newTrack.human_direction < 0)
+                                        newTrack.human_direction += 360;
+                                    while (newTrack.human_direction >= 360)
+                                        newTrack.human_direction -= 360;
+                                }
+                                waitingList.push_back(newTrack);
+                                //ROS_INFO("waitingList +1");
+                            }
                         }
-                        else {                              // No tracking of direction yet
-                            d_l = direction_left;
-                            if (direction_right - direction_left > 180)
-                                d_r = direction_right - 360;
-                            else if (direction_left - direction_right > 180)
-                                d_r = direction_right + 360;
-                            else
-                                d_r = direction_right;
-                            
-                            direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);
-                            human_direction = (int) round(direction_new);
-                        }
-                        while (human_direction < 0)
-                            human_direction += 360;
-                        while (human_direction >= 360)
-                            human_direction -= 360;
-                        
-                        q_human.setRPY(0,0,human_direction*CV_PI/180.);
+                        /*else {
+                            ROS_WARN("OB: %.2f, %.2f, %.2f", x_out, y_out, z_out);
+                        }*/
                     }
-                    else {
-                        ROS_INFO("\t%.0f,%.0f-->%.2f,%.2f-->%d", direction_left, direction_right, prob_left, prob_right, human_direction);
-                    }
-                    
-                    last_time_human = new_time;
-                    return;
+                    /*else {
+                        ROS_WARN("Rho too long: %.2f", rho);
+                    }*/
                 }
-                else {
-                    ROS_WARN("OB: %.2f, %.2f, %.2f", x_out, y_out, z_out);
-                }
+                /*else {
+                    ROS_WARN("Wrong disparity: %.2f, %.2f", psi1, psi2);
+                }*/
             }
-            else {
-                ROS_WARN("Rho too long: %.2f", rho);
+            if (matched) {
+                //ROS_INFO("Matched");
+                break;
+            }
+        }
+    }
+
+    if (waitingList.size()) {
+        vector<int> wait_i, wait_j;
+        for (vector<HeadTrack>::iterator w = waitingList.begin(); w != waitingList.end(); w++) {
+            if (find(wait_i.begin(), wait_i.end(), w->i) == wait_i.end() &&
+                find(wait_j.begin(), wait_j.end(), w->j) == wait_j.end()) {
+                wait_i.push_back(w->i);
+                wait_j.push_back(w->j);
+                usedLeft[w->i] = true;
+                usedRight[w->j] = true;
+                trackers.push_back(*w);
+                ROS_INFO("New");
+            }
+        }
+    }
+
+    for (int t = 0; t < trackers.size(); t++) {
+        if (usedTracks[t])
+            continue;
+
+        vector<HeadTrack>::iterator ptr = trackers.begin() + t;
+        Mat estimated_p1 = (ptr->kf.measurementMatrix)*(ptr->kf.statePost);
+        float p_x = estimated_p1.at<float>(0,0);
+        float p_y = estimated_p1.at<float>(1,0);
+        float p_z = estimated_p1.at<float>(2,0);
+
+        int best_match_l = -1, best_match_r = -1;
+        float best_dist_l = 1000.f, best_dist_r = 1000.f;
+
+        float best_x1, best_y1, best_x2, best_y2;
+
+        for (int l = 0; l < Psis1.size(); l++) {
+            if (usedLeft[l])
+                continue;
+
+            psi1 = Psis1[l];
+            beta1 = Betas1[l];
+            float est_rho1 = norm(estimated_p1);
+            float est_x1 = p_z * tan(psi1)/cos(beta1);
+            float est_y1 = p_z * tan(beta1);
+
+            float diff1 = sqrt(pow(est_x1-p_x, 2) + pow(est_y1-p_y, 2));
+            if (diff1 < best_dist_l) {
+                best_match_l = l;
+                best_dist_l = diff1;
+                best_x1 = est_x1;
+                best_y1 = est_y1;
+            }
+        }
+
+        for (int r = 0; r < Psis2.size(); r++) {
+            if (usedRight[r])
+                continue;
+
+            psi2 = Psis2[r];
+            beta2 = Betas2[r];
+            float est_rho1 = norm(estimated_p1);
+            float est_x2 = p_z * tan(psi2)/cos(beta2);
+            float est_y2 = p_z * tan(beta2);
+
+            float diff2 = sqrt(pow(est_x2-p_x, 2) + pow(est_y2-p_y, 2));
+            if (diff2 < best_dist_r) {
+                best_match_r = r;
+                best_dist_r = diff2;
+                best_x2 = est_x2;
+                best_y2 = est_y2;
+            }
+        }
+
+        if (best_dist_l > 0.5 && best_dist_r > 0.5)
+            continue;
+
+        if (best_dist_l < best_dist_r) {
+            ROS_INFO("Used left camera for correction.");
+            // Use est_x1, est_y1
+            Mat measurement = (Mat_<float>(3,1) << best_x1, best_y1, p_z);
+            psi1 = Psis1[best_match_l];
+            beta1 = Betas1[best_match_l];
+            float c_psi1 = cos(psi1);
+            float s_psi1 = sin(psi1);
+            float c_beta1 = cos(beta1);
+            float s_beta1 = sin(beta1);
+            Mat J_meas = (Mat_<float>(3,3) <<   p_z/(c_psi1*c_psi1*c_beta1),    p_z*tan(psi1)*s_beta1/(c_beta1*c_beta1),    tan(psi1)/c_beta1,
+                                                0,                              p_z/(c_beta1*c_beta1),                      tan(beta1),
+                                                0,                              0,                                          1);
+            Mat var_meas = Mat::ones(3,3,CV_32FC1);
+            (Vars1[best_match_l]).copyTo(var_meas.colRange(0,2).rowRange(0,2));
+            var_meas.at<float>(2,2) = ptr->kf.errorCovPost.at<float>(2,2);
+            var_meas = J_meas*var_meas*J_meas.t();
+            ptr->kf.measurementNoiseCov = var_meas;
+            ptr->kf.correct(measurement);
+
+            // direction calculation
+            float direction_new = heads_left->polygon.points[best_match_l].z;
+            human_direction = ptr->human_direction;
+
+            float vx = ptr->kf.statePost.at<float>(3,0);
+            float vy = ptr->kf.statePost.at<float>(4,0);
+
+            float prob_v_new = 1.f, prob_v_old = 1.f;
+            float prob_old = 1.f;
+            if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
+                // get clue from direction of motion
+                float direction_v = atan2(vy, vx) * 180./CV_PI;
+
+                float diff_new = abs(direction_new - direction_v);
+
+                if (diff_new > 180)
+                    diff_new = 360 - diff_new;
+
+                if (diff_new <= 90)
+                    prob_v_new = exp(-diff_new*diff_new/(2*30.*30.));
+                else
+                    prob_v_new = 0;
+
+                float diff_old = abs(human_direction - direction_v);
+
+                if (diff_old > 180)
+                    diff_old = 360 - diff_old;
+
+                if (diff_old <= 90)
+                    prob_v_old = exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
+                else
+                    prob_v_old = 0;
+            }
+
+            float diff_old = abs(direction_new - human_direction);
+            if (diff_old > 180)
+                diff_old = 360 - diff_old;
+            prob_old = exp(-diff_old*diff_old/(2*15.*15.));
+
+            float prob_new = prob_v_new * prob_old / prob_v_old;
+
+            float d_new;
+            if (prob_new > 0) {
+                if (direction_new - human_direction > 180)
+                    d_new = direction_new - 360;
+                else if (human_direction - direction_new > 180)
+                    d_new = direction_new + 360;
+                else
+                    d_new = direction_new;
+
+                human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
+
+                while (human_direction < 0)
+                    human_direction += 360;
+                while (human_direction >= 360)
+                    human_direction -= 360;
+
+                ptr->human_direction = human_direction;
             }
         }
         else {
-            ROS_WARN("Wrong disparity: %.2f, %.2f", psi1, psi2);
-        }
-    }
-    else {
-        ROS_INFO("No match: %.2f, %.2f", beta1, beta2);
-    }
+            ROS_INFO("Used right camera for correction.");
+            // Use est_x2, est_y2
+            Mat measurement = (Mat_<float>(3,1) << best_x2, best_y2, p_z);
+            psi2 = Psis2[best_match_r];
+            beta2 = Betas2[best_match_r];
+            float c_psi2 = cos(psi2);
+            float s_psi2 = sin(psi2);
+            float c_beta2 = cos(beta2);
+            float s_beta2 = sin(beta2);
+            Mat J_meas = (Mat_<float>(3,3) <<   p_z/(c_psi2*c_psi2*c_beta2),    p_z*tan(psi2)*s_beta2/(c_beta2*c_beta2),    tan(psi2)/c_beta2,
+                                                0,                              p_z/(c_beta2*c_beta2),                      tan(beta2),
+                                                0,                              0,                                          1);
+            Mat var_meas = Mat::ones(3,3,CV_32FC1);
+            (Vars2[best_match_r]).copyTo(var_meas.colRange(0,2).rowRange(0,2));
+            var_meas.at<float>(2,2) = ptr->kf.errorCovPost.at<float>(2,2);
+            var_meas = J_meas*var_meas*J_meas.t();
+            ptr->kf.measurementNoiseCov = var_meas;
+            ptr->kf.correct(measurement);
 
-    // Arriving here means that points from two cameras do not match properly. Now choose one to update, with assumption of constant height.
-    // Left
-    Mat estimated_p1 = kf_human.measurementMatrix*kf_human.statePost;
-    float p_z = estimated_p1.at<float>(2,0);
-    float est_rho1 = norm(estimated_p1);
-    float est_x1 = p_z * tan(psi1)/c_beta1;
-    float est_y1 = p_z * tan(beta1);
-    //float est_psi1 = asin(estimated_p1.at<float>(0,0)/est_rho1);
-    //float est_beta1 = atan2(estimated_p1.at<float>(1,0), estimated_p1.at<float>(2,0));
-    //float diff_psi1 = fabs(est_psi1-psi1);
-    //float diff_beta1 = fabs(est_beta1-beta1);
+            // direction calculation
+            float direction_new = heads_right->polygon.points[best_match_r].z;
+            human_direction = ptr->human_direction;
 
-    // Right
-    float est_x2 = baseline + p_z * tan(psi2)/c_beta2;
-    float est_y2 = p_z * tan(beta2);
-    //Mat estimated_p2 = estimated_p1 - (Mat_<float>(3,1) << baseline, 0., 0.);
-    //float est_rho2 = norm(estimated_p2);
-    //float est_psi2 = asin(estimated_p2.at<float>(0,0)/est_rho2);
-    //float est_beta2 = atan2(estimated_p2.at<float>(1,0), estimated_p2.at<float>(2,0));
-    //float diff_psi2 = fabs(est_psi2-psi2);
-    //float diff_beta2 = fabs(est_beta2-beta2);
+            float vx = ptr->kf.statePost.at<float>(3,0);
+            float vy = ptr->kf.statePost.at<float>(4,0);
 
-    float p_x = estimated_p1.at<float>(0,0);
-    float p_y = estimated_p1.at<float>(1,0);
-    float diff1 = sqrt(pow(est_x1-p_x, 2) + pow(est_y1-p_y, 2));
-    float diff2 = sqrt(pow(est_x2-p_x, 2) + pow(est_y2-p_y, 2));
+            float prob_v_new = 1.f, prob_v_old = 1.f;
+            float prob_old = 1.f;
+            if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
+                // get clue from direction of motion
+                float direction_v = atan2(vy, vx) * 180./CV_PI;
 
-    if (diff1 > 0.5 && diff2 > 0.5) {
-        ROS_INFO("Estimated position more than 50 cm.");
-        return;
-    }
-    if (diff1 < diff2) {
-        // Use est_x1, est_y1
-        Mat measurement = (Mat_<float>(3,1) << est_x1, est_y1, p_z);
-        Mat J_meas = (Mat_<float>(3,3) <<   p_z/(c_psi1*c_psi1*c_beta1),    p_z*tan(psi1)*s_beta1/(c_beta1*c_beta1),    tan(psi1)/c_beta1,
-                                            0,                              p_z/(c_beta1*c_beta1),                      tan(beta1),
-                                            0,                              0,                                          1);
-        Mat var_meas = Mat::ones(3,3,CV_32FC1);
-        var_beta_psi1.copyTo(var_meas.colRange(0,2).rowRange(0,2));
-        var_meas.at<float>(2,2) = kf_human.errorCovPost.at<float>(2,2);
-        var_meas = J_meas*var_meas*J_meas.t();
-        kf_human.measurementNoiseCov = var_meas;
-        kf_human.correct(measurement);
-        ROS_INFO("Used left camera for correction.");
+                float diff_new = abs(direction_new - direction_v);
 
-        // direction calculation
-        float direction_new = heads_left->polygon.points[0].z;
+                if (diff_new > 180)
+                    diff_new = 360 - diff_new;
 
-        float vx = kf_human.statePost.at<float>(3,0);
-        float vy = kf_human.statePost.at<float>(4,0);
+                if (diff_new <= 90)
+                    prob_v_new = exp(-diff_new*diff_new/(2*30.*30.));
+                else
+                    prob_v_new = 0;
 
-        float prob_v_new = 1.f, prob_v_old = 1.f;
-        float prob_old = 1.f;
-        if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
-            // get clue from direction of motion
-            float direction_v = atan2(vy, vx) * 180./CV_PI;
+                float diff_old = abs(human_direction - direction_v);
 
-            float diff_new = abs(direction_new - direction_v);
+                if (diff_old > 180)
+                    diff_old = 360 - diff_old;
 
-            if (diff_new > 180)
-                diff_new = 360 - diff_new;
+                if (diff_old <= 90)
+                    prob_v_old = exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
+                else
+                    prob_v_old = 0;
+            }
 
-            if (diff_new <= 90)
-                prob_v_new = exp(-diff_new*diff_new/(2*30.*30.));
-            else
-                prob_v_new = 0;
-
-            float diff_old = abs(human_direction - direction_v);
-
-            if (diff_old > 180)
-                diff_old = 360 - diff_old;
-
-            if (diff_old <= 90)
-                prob_v_old = exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
-            else
-                prob_v_old = 0;
-        }
-
-        if (human_direction >= 0) {         // Already tracking direction
             float diff_old = abs(direction_new - human_direction);
             if (diff_old > 180)
                 diff_old = 360 - diff_old;
             prob_old = exp(-diff_old*diff_old/(2*15.*15.));
-        }
 
-        float prob_new = prob_v_new * prob_old / prob_v_old;
+            float prob_new = prob_v_new * prob_old / prob_v_old;
 
-        float d_new;
-        if (prob_new > 0) {
-            if (direction_new - human_direction > 180)
-                d_new = direction_new - 360;
-            else if (human_direction - direction_new > 180)
-                d_new = direction_new + 360;
-            else
-                d_new = direction_new;
+            float d_new;
+            if (prob_new > 0) {
+                if (direction_new - human_direction > 180)
+                    d_new = direction_new - 360;
+                else if (human_direction - direction_new > 180)
+                    d_new = direction_new + 360;
+                else
+                    d_new = direction_new;
 
-            human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
+                human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
 
-            while (human_direction < 0)
-                human_direction += 360;
-            while (human_direction >= 360)
-                human_direction -= 360;
+                while (human_direction < 0)
+                    human_direction += 360;
+                while (human_direction >= 360)
+                    human_direction -= 360;
 
-            q_human.setRPY(0,0,human_direction*CV_PI/180.);
-        }
-    }
-    else {
-        // Use est_x2, est_y2
-        Mat measurement = (Mat_<float>(3,1) << est_x2, est_y2, p_z);
-        Mat J_meas = (Mat_<float>(3,3) <<   p_z/(c_psi2*c_psi2*c_beta2),    p_z*tan(psi2)*s_beta2/(c_beta2*c_beta2),    tan(psi2)/c_beta2,
-                                            0,                              p_z/(c_beta2*c_beta2),                      tan(beta2),
-                                            0,                              0,                                          1);
-        Mat var_meas = Mat::ones(3,3,CV_32FC1);
-        var_beta_psi1.copyTo(var_meas.colRange(0,2).rowRange(0,2));
-        var_meas.at<float>(2,2) = kf_human.errorCovPost.at<float>(2,2);
-        var_meas = J_meas*var_meas*J_meas.t();
-        kf_human.measurementNoiseCov = var_meas;
-        kf_human.correct(measurement);
-        ROS_INFO("Used right camera for correction.");
-
-        // direction calculation
-        float direction_new = heads_right->polygon.points[0].z;
-
-        float vx = kf_human.statePost.at<float>(3,0);
-        float vy = kf_human.statePost.at<float>(4,0);
-
-        float prob_v_new = 1.f, prob_v_old = 1.f;
-        float prob_old = 1.f;
-        if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
-            // get clue from direction of motion
-            float direction_v = atan2(vy, vx) * 180./CV_PI;
-
-            float diff_new = abs(direction_new - direction_v);
-
-            if (diff_new > 180)
-                diff_new = 360 - diff_new;
-
-            if (diff_new <= 90)
-                prob_v_new = exp(-diff_new*diff_new/(2*30.*30.));
-            else
-                prob_v_new = 0;
-
-            float diff_old = abs(human_direction - direction_v);
-
-            if (diff_old > 180)
-                diff_old = 360 - diff_old;
-
-            if (diff_old <= 90)
-                prob_v_old = exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
-            else
-                prob_v_old = 0;
-        }
-
-        if (human_direction >= 0) {         // Already tracking direction
-            float diff_old = abs(direction_new - human_direction);
-            if (diff_old > 180)
-                diff_old = 360 - diff_old;
-            prob_old = exp(-diff_old*diff_old/(2*15.*15.));
-        }
-
-        float prob_new = prob_v_new * prob_old / prob_v_old;
-
-        float d_new;
-        if (prob_new > 0) {
-            if (direction_new - human_direction > 180)
-                d_new = direction_new - 360;
-            else if (human_direction - direction_new > 180)
-                d_new = direction_new + 360;
-            else
-                d_new = direction_new;
-
-            human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
-
-            while (human_direction < 0)
-                human_direction += 360;
-            while (human_direction >= 360)
-                human_direction -= 360;
-
-            q_human.setRPY(0,0,human_direction*CV_PI/180.);
+                ptr->human_direction = human_direction;
+            }
         }
     }
 }
@@ -791,19 +935,38 @@ void Triangulator::update(void) {
         transform.setRotation(q);
         br_.sendTransform(tf::StampedTransform(transform, new_time, "world", "blimp"));
     }
-    if (is_tracking_human) {
-        double delta_t = (new_time - last_time_human).toSec();
-        kf_human.transitionMatrix.at<float>(0,3) = delta_t;
-        kf_human.transitionMatrix.at<float>(1,4) = delta_t;
-        kf_human.transitionMatrix.at<float>(2,5) = delta_t;
-        kf_human.predict();     // TODO use delta_t for update (velocity in [m/s])
-        SVD::compute(kf_human.errorCovPost.colRange(0,3).rowRange(0,3), sds, sd_rotation, sd_rotation_t);
-        transform_human.setOrigin(tf::Vector3(kf_human.statePost.at<float>(0,0),kf_human.statePost.at<float>(1,0),kf_human.statePost.at<float>(2,0)));
+
+    for (vector<HeadTrack>::iterator ptr = trackers.begin(); ptr != trackers.end(); ) {
+        double delta_t = (new_time - ptr->last_time).toSec();
+        ptr->kf.transitionMatrix.at<float>(0,3) = delta_t;
+        ptr->kf.transitionMatrix.at<float>(1,4) = delta_t;
+        ptr->kf.transitionMatrix.at<float>(2,5) = delta_t;
+        ptr->kf.predict();     // TODO use delta_t for update (velocity in [m/s])
+        SVD::compute(ptr->kf.errorCovPost.colRange(0,3).rowRange(0,3), ptr->sds_human, ptr->sd_rotation_human, ptr->sd_rotation_human_t);
+        ptr->last_time = new_time;
+        // TODO Check & remove
+        if (ptr->sds_human.at<float>(0,0) > 1.0 ||
+            ptr->sds_human.at<float>(1,0) > 1.0 ||
+            ptr->sds_human.at<float>(2,0) > 1.0) {
+                ptr = trackers.erase(ptr);
+                ROS_INFO("Removed a track");
+        }
+        else
+            ptr++;
+    }
+    //if (trackers.size()) {
+    //    vector<HeadTrack>::iterator ptr = trackers.begin();
+    int count = 0;
+    for (vector<HeadTrack>::iterator ptr = trackers.begin(); ptr != trackers.end(); ptr++) {
+        char buf[20];
+        sprintf(buf, "human%d", count);
+        count++;
+        q_human.setRPY(0,0,ptr->human_direction*CV_PI/180);
+        transform_human.setOrigin(tf::Vector3(ptr->kf.statePost.at<float>(0,0), ptr->kf.statePost.at<float>(1,0), ptr->kf.statePost.at<float>(2,0)));
         transform_human.setRotation(q_human);
-        br_.sendTransform(tf::StampedTransform(transform_human, new_time, "world", "head"));
+        br_.sendTransform(tf::StampedTransform(transform_human, new_time, "world", buf));
     }
     last_time = new_time;
-    last_time_human = new_time;
 }
 
 void Triangulator::setLookup() {
@@ -839,6 +1002,20 @@ float Triangulator::lookupTheta(float radius, int camNum) {
         ROS_ERROR("Invalid camera number, either 1 (for left) or 2 (for right)");
         return -1;
     }
+}
+
+HeadTrack Triangulator::createNewTrack(float x, float y, float z, Mat var) {
+    HeadTrack newTrack;
+    newTrack.kf = KalmanFilter(6,3,0);
+    newTrack.kf.statePost = (Mat_<float>(6,1) << x, y, z, 0., 0., 0.);
+    setIdentity(newTrack.kf.measurementMatrix);
+    const Mat d2 = (Mat_<float>(1,6)<< 0.09,0.09,0.09,0.09,0.09,0.09);
+    newTrack.kf.processNoiseCov = Mat::diag(d2);
+    setIdentity(newTrack.kf.errorCovPre);
+    var.copyTo(newTrack.kf.errorCovPre.colRange(0,3).rowRange(0,3));        // Set variance of x,y,z as computed, leave it to diag(1) for velocity
+    newTrack.kf.errorCovPre.copyTo(newTrack.kf.errorCovPost);
+    SVD::compute(var, newTrack.sds_human, newTrack.sd_rotation_human, newTrack.sd_rotation_human_t);
+    return newTrack;
 }
 
 int main (int argc, char **argv) {
