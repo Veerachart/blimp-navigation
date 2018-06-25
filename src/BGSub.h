@@ -87,6 +87,11 @@ protected:
     float k1;           // first coefficient in fisheye model
 
     Mat circleMask;     // mask for marking the area that should be considered (eliminate flickering of codes in the corners)
+    Mat blimpStartMask;     // Mask for marking the blimp's position at the beginning
+                            // This should be use to exclude the area from the foreground at the beginning, and gradually disappear
+    bool startMaskSet;      // Flag to mark that the mask has been set
+    bool startMaskInUse;    // Flag to mark that the initial blimp is still in BG model
+    int countBGMask;        // Count of pixels in the mask
 };
 
 #endif

@@ -110,6 +110,9 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
     humanWidth = 0.5;
     m = 157.;
     k1 = 1.5;
+
+    startMaskSet = false;
+    startMaskInUse = false;
 }
 
 BGSub::~BGSub() {
@@ -173,21 +176,41 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     vector< vector < Point > > hull(1);
     if (contours_blimp.size()) {
         std::sort(contours_blimp.begin(), contours_blimp.end(), compareContourAreas);
-        blimp_bb = groupBlimp(contours_blimp, 1.0);
+        blimp_bb = groupBlimp(contours_blimp, 0.25);
         blimp_center = blimp_bb.center;
         if (blimp_bb.center != Point2f(0.,0.) || blimp_bb.size != Size2f(0.,0.) || blimp_bb.angle != 0.) {
             convexHull(contours_blimp[0],hull[0]);
             drawContours(mask_blimp, hull, 0, Scalar(255), CV_FILLED);
         }
     }
+    if (!startMaskSet) {
+        mask_blimp.copyTo(blimpStartMask);
+        startMaskSet = true;
+        startMaskInUse = true;
+        countBGMask = countNonZero(blimpStartMask);
+    }
+    else {
+        Mat BG, BGBlimp, BGBlimp_blue;
+        pMOG2.getBackgroundImage(BG);
+        BG.copyTo(BGBlimp, blimpStartMask);
+        inRange(BGBlimp, Scalar(iLowH_1, iLowS_1, iLowV_1), Scalar(iHighH_1, iHighS_1, iHighV_1), BGBlimp_blue);
+        int countBlueBG;
+        countBlueBG = countNonZero(BGBlimp_blue);
+        if (countBlueBG < 0.1*countBGMask) {
+            // Has less than 10 percent of the BG model in the range of blimp's color --> we can stop removing FG by this mask
+            startMaskInUse = false;
+        }
+    }
     imshow("Blimp", mask_blimp);
     fgMaskMOG2 = fgMaskMOG2 - mask_blimp;
+    if (startMaskInUse)
+        fgMaskMOG2 = fgMaskMOG2 - blimpStartMask;
                 
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_CLOSE, Mat::ones(5,5,CV_8U), Point(-1,-1), 2);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
-    
+    imshow("For human detect", fgMaskMOG2);
     
     if (!detect_human)
         return false;
@@ -1069,38 +1092,44 @@ void BGSub::groupContours ( vector< vector<Point> > inputContours, vector<Rotate
 RotatedRect BGSub::groupBlimp ( vector< vector<Point> > &inputContours, double distanceThreshold ) {
     if (!inputContours.size())
         return RotatedRect(Point2f(0.,0.), Size2f(0.,0.),0.);
-    // inputContours should be sorted in descending area order
-    vector< vector<Point> >::iterator it = inputContours.begin();
-    vector<Point> contour_i = *it;
-    if (contourArea(contour_i) < 100.)
-        return RotatedRect(Point2f(0.,0.), Size2f(0.,0.),0.);
-    RotatedRect rect_i = minAreaRect(contour_i);
-    Point2f center_i = rect_i.center;
-    double r_i = max(rect_i.size.width, rect_i.size.height) /2.;
-    vector< vector<Point> >::iterator it_j = it+1;
-    while (it_j != inputContours.end()) {
-        vector<Point> contour_j = *it_j;
-        RotatedRect rect_j = minAreaRect(contour_j);
-        Point2f center_j = rect_j.center;
-        double r_j = max(rect_j.size.width, rect_j.size.height) /2.;
-        double d_ij = norm(center_i - center_j);        // Distance between 2 contours
-        if ((d_ij - r_i - r_j) < distanceThreshold * (r_i+r_j)) {
-            // Close - should be combined
-            contour_i.insert(contour_i.end(), contour_j.begin(), contour_j.end());
-            // update bounding box
-            rect_i = minAreaRect(contour_i);
-            r_i = max(rect_i.size.width, rect_i.size.height) /2.;
-            it_j = inputContours.erase(it_j);
+
+    if (inputContours.size() > 1) {
+        if (contourArea(inputContours[0]) < 100.)
+            return RotatedRect(Point2f(0.,0.), Size2f(0.,0.),0.);
+        vector< vector<Point> >::iterator it_contour = inputContours.begin(), it_contour2;
+        it_contour2 = it_contour + 1;
+        RotatedRect r1 = minAreaRect(*it_contour);
+        float area1 = r1.size.area();
+        for ( ; it_contour2 != inputContours.end(); ) {
+            RotatedRect r2 = minAreaRect(*it_contour2);
+            vector<Point> contour_j = *it_contour2;
+            float area2 = r2.size.area();
+
+            vector<Point2f> v, hull;
+            int ret = rotatedRectangleIntersection(r1,r2,v);
+            if (ret != INTERSECT_NONE) {
+                it_contour->insert(it_contour->end(), contour_j.begin(), contour_j.end());
+                // update bounding box
+                r1 = minAreaRect(*it_contour);
+                inputContours.erase(it_contour2);
+                it_contour2 = it_contour + 1;
+            }
+            else {
+                it_contour2++;
+            }
         }
-        else {
-            ++it_j;
-        }
+        return r1;
     }
-    return rect_i;
+    else {
+        return minAreaRect(inputContours[0]);
+    }
 }
 
 
 Size BGSub::getHumanSize(float radius) {
+    if (radius < 0.1) {
+        return Size(100.f, 200.f);
+    }
 	float width;
 
 	width = cvRound(humanWidth * radius /((camHeight-humanHeight) * tan(radius/(m*k1))));
