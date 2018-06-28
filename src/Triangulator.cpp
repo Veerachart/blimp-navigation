@@ -6,6 +6,8 @@
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
 #include <message_filters/sync_policies/approximate_time.h>
+#include <std_msgs/Int16.h>
+#include <fstream>
 
 using namespace geometry_msgs;
 using namespace cv;
@@ -24,6 +26,8 @@ struct HeadTrack {
 class Triangulator {
 public:
     Triangulator(float _baseline=1.);
+    Triangulator(string const &_blimp_file_name, string const &_human_file_name, float _baseline=1.);
+    void yawCallback(const std_msgs::Int16::ConstPtr& msg);
     void triangulateCallback(const PointStampedConstPtr& point_left, const PointStampedConstPtr& point_right);
     void triangulateHumanCallback(const PolygonStampedConstPtr& heads_left, const PolygonStampedConstPtr& heads_right);
     void update(void);
@@ -43,7 +47,11 @@ protected:
     message_filters::Subscriber<geometry_msgs::PolygonStamped> sub_human_left, sub_human_right;
     message_filters::Synchronizer<MySyncPolicy> sync;
     message_filters::Synchronizer<MySyncPolicy2> sync_human;
+    ros::Subscriber yaw_sub;
     
+    short blimp_deg;                        // keep degree for logging propose
+    float yaw_blimp;                        // receive as Int16 in degree, convert to radian and keep as float
+
     KalmanFilter kf_blimp;
     bool is_tracking;
     
@@ -60,8 +68,12 @@ protected:
     Mat sd_rotation_human;
     ros::Time last_time;
     ros::Time last_time_human;
+    ros::Time last_time_yaw;                // For keeping the last time that yaw data is updated, so the matching between blimp & yaw is not too old
 
     vector<HeadTrack> trackers;
+    bool save;
+    std::ofstream file_blimp;
+    std::ofstream file_human;
 
     float rLookup1[181], rLookup2[181];
     float thetaLookup[181];
@@ -83,6 +95,7 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     //sync = message_filters::Synchronizer<MySyncPolicy> (MySyncPolicy(10), sub_left, sub_right);
     sync.registerCallback(boost::bind(&Triangulator::triangulateCallback, this, _1, _2));
     sync_human.registerCallback(boost::bind(&Triangulator::triangulateHumanCallback, this, _1, _2));
+    yaw_sub = nh.subscribe("/blimp/yaw", 1, &Triangulator::yawCallback, this);
     
     baseline = _baseline;
     kf_blimp = KalmanFilter(6,3,0);
@@ -94,9 +107,10 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     transform_human.setRotation(q_human);
     
     setIdentity(kf_blimp.measurementMatrix);
-    const Mat d = (Mat_<float>(1,6)<< 0.0009,0.0009,0.0009,0.0025,0.0025,0.0025);
+    const Mat d = (Mat_<float>(1,6)<< 0.04,0.04,0.04,0.04,0.04,0.04);
     kf_blimp.processNoiseCov = Mat::diag(d);
     const Mat d2 = (Mat_<float>(1,6)<< 0.04,0.04,0.04,0.04,0.04,0.04);
+
     // Parameters of two cameras
     coeffs1[0] = -0.003125;
     coeffs1[2] =  0.001029;
@@ -131,10 +145,88 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     sigma_u = 10.;
     ////////////////////////////
     setLookup();
+
+    save = false;
+}
+
+Triangulator::Triangulator(string const &_blimp_file_name, string const &_human_file_name, float _baseline)
+      : sub_left(nh, "cam_left/blimp_center", 1),
+        sub_right(nh, "cam_right/blimp_center", 1),
+        sub_human_left(nh, "cam_left/human_center", 1),
+        sub_human_right(nh, "cam_right/human_center", 1),
+        sync(Triangulator::MySyncPolicy(2), sub_left, sub_right),
+        sync_human(Triangulator::MySyncPolicy2(2), sub_human_left, sub_human_right),
+        file_blimp(_blimp_file_name.c_str(),std::ios::out),
+        file_human(_human_file_name.c_str(),std::ios::out) {
+
+    sync.registerCallback(boost::bind(&Triangulator::triangulateCallback, this, _1, _2));
+    sync_human.registerCallback(boost::bind(&Triangulator::triangulateHumanCallback, this, _1, _2));
+    yaw_sub = nh.subscribe("/blimp/yaw", 1, &Triangulator::yawCallback, this);
+
+    baseline = _baseline;
+    kf_blimp = KalmanFilter(6,3,0);
+    is_tracking = false;
+    q.setRPY(0,0,0);
+    transform.setRotation(q);
+
+    q_human.setRPY(0,0,0);
+    transform_human.setRotation(q_human);
+
+    setIdentity(kf_blimp.measurementMatrix);
+    const Mat d = (Mat_<float>(1,6)<< 0.04,0.04,0.04,0.04,0.04,0.04);
+    kf_blimp.processNoiseCov = Mat::diag(d);
+    const Mat d2 = (Mat_<float>(1,6)<< 0.04,0.04,0.04,0.04,0.04,0.04);
+
+    // Parameters of two cameras
+    coeffs1[0] = -0.003125;
+    coeffs1[2] =  0.001029;
+    coeffs1[4] =  0.007671;
+    coeffs1[6] =  0.013237;
+    coeffs1[8] =  1.492357;
+    coeffs1[1] = coeffs1[3] = coeffs1[5] = coeffs1[7] = 0.;
+    coeffs2[0] = -0.003125;
+    coeffs2[2] =  0.001029;
+    coeffs2[4] =  0.007671;
+    coeffs2[6] =  0.013237;
+    coeffs2[8] =  1.492357;
+    coeffs2[1] = coeffs2[3] = coeffs2[5] = coeffs2[7] = 0.;
+    R1 = (Mat_<float>(3,3) <<  0.999228,  0.035960, -0.015825,
+                              -0.035960,  0.999353,  0.000285,
+                               0.015825,  0.000285,  0.999875);
+    R2 = (Mat_<float>(3,3) <<  0.996727, -0.075889,  0.027869,
+                               0.075839,  0.997116,  0.002871,
+                              -0.028007, -0.000748,  0.999607);
+
+    mu1 = 157.1979;
+    mv1 = 157.2336;
+    u01 = 385.21;
+    v01 = 385.24;
+    m1 = (mu1+mv1)/2.;
+    mu2 = 156.4238;
+    mv2 = 156.4208;
+    u02 = 385.14;
+    v02 = 385.32;
+    m2 = (mu2+mv2)/2.;
+
+    sigma_u = 10.;
+    ////////////////////////////
+    setLookup();
+
+    save = true;
+
+    file_blimp << "Time,x,y,z,yaw" << std::endl;
+    file_blimp << std::fixed << std::setprecision(6);
+    file_human << "Time,index,x,y,z,direction" << std::endl;
+    file_human << std::fixed << std::setprecision(6);
+}
+
+void Triangulator::yawCallback(const std_msgs::Int16::ConstPtr& msg) {
+    blimp_deg = -msg->data;
+    yaw_blimp = float(blimp_deg) * CV_PI/180.;
+    last_time_yaw = ros::Time::now();
 }
 
 void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, const PointStampedConstPtr& point_right) {
-    return;
     ros::Time new_time;
     if (point_left->header.stamp - point_right->header.stamp > ros::Duration(0) )     // left after
         new_time = point_left->header.stamp;
@@ -145,7 +237,7 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
         ROS_INFO("Not detected");
         return;
     }
-    ROS_INFO("(%.2f, %.2f), (%.2f, %.2f)", point_left->point.x, point_left->point.y, point_right->point.x, point_right->point.y);
+    //ROS_INFO("(%.2f, %.2f), (%.2f, %.2f)", point_left->point.x, point_left->point.y, point_right->point.x, point_right->point.y);
     
     float x,y,phi,r,theta;
     float psi1,beta1;
@@ -304,6 +396,7 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
                         kf_blimp.statePost = (Mat_<float>(6,1) << x_out, y_out, z_out, 0., 0., 0.);
                         setIdentity(kf_blimp.errorCovPost);
                         var_p.copyTo(kf_blimp.errorCovPost.colRange(0,3).rowRange(0,3));        // Set variance of x,y,z as computed, leave it to diag(1) for velocity
+                        kf_blimp.errorCovPost.copyTo(kf_blimp.errorCovPre);
                         SVD::compute(var_p, sds, sd_rotation, sd_rotation_t);
                         is_tracking = true;
                         ROS_INFO("Started tracking");
@@ -319,6 +412,7 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
 }
 
 void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_left, const PolygonStampedConstPtr& heads_right) {
+    return;
     ros::Time new_time;
     if (heads_left->header.stamp - heads_right->header.stamp > ros::Duration(0) )     // left after
         new_time = heads_left->header.stamp;
@@ -931,11 +1025,27 @@ void Triangulator::update(void) {
         kf_blimp.transitionMatrix.at<float>(2,5) = delta_t;
         kf_blimp.predict();     // TODO use delta_t for update (velocity in [m/s])
         SVD::compute(kf_blimp.errorCovPost.colRange(0,3).rowRange(0,3), sds, sd_rotation, sd_rotation_t);
-        transform.setOrigin(tf::Vector3(kf_blimp.statePost.at<float>(0,0),kf_blimp.statePost.at<float>(1,0),kf_blimp.statePost.at<float>(2,0)));
-        transform.setRotation(q);
-        br_.sendTransform(tf::StampedTransform(transform, new_time, "world", "blimp"));
+        if (sds.at<float>(0,0) > 1.0 ||
+            sds.at<float>(1,0) > 1.0 ||
+            sds.at<float>(2,0) > 1.0) {
+            is_tracking = false;
+            ROS_INFO("Removed a blimp");
+        }
+        else {
+            transform.setOrigin(tf::Vector3(kf_blimp.statePost.at<float>(0,0),kf_blimp.statePost.at<float>(1,0),kf_blimp.statePost.at<float>(2,0)));
+            q.setRPY(0,0,yaw_blimp);
+            if (new_time - last_time_yaw > ros::Duration(1.0))
+                ROS_WARN("Yaw information a bit too old.");
+            transform.setRotation(q);
+            br_.sendTransform(tf::StampedTransform(transform, new_time, "world", "blimp"));
+            if (save) {
+                file_blimp << new_time.toSec() << "," << kf_blimp.statePost.at<float>(0,0) << "," << kf_blimp.statePost.at<float>(1,0) << "," <<
+                        kf_blimp.statePost.at<float>(2,0) << "," << blimp_deg << std::endl;
+            }
+        }
     }
 
+    int count = 0;
     for (vector<HeadTrack>::iterator ptr = trackers.begin(); ptr != trackers.end(); ) {
         double delta_t = (new_time - ptr->last_time).toSec();
         ptr->kf.transitionMatrix.at<float>(0,3) = delta_t;
@@ -951,20 +1061,20 @@ void Triangulator::update(void) {
                 ptr = trackers.erase(ptr);
                 ROS_INFO("Removed a track");
         }
-        else
+        else {
+            char buf[20];
+            sprintf(buf, "human%d", count);
+            q_human.setRPY(0,0,ptr->human_direction*CV_PI/180);
+            transform_human.setOrigin(tf::Vector3(ptr->kf.statePost.at<float>(0,0), ptr->kf.statePost.at<float>(1,0), ptr->kf.statePost.at<float>(2,0)));
+            transform_human.setRotation(q_human);
+            br_.sendTransform(tf::StampedTransform(transform_human, new_time, "world", buf));
+            if (save) {
+                file_human << new_time.toSec() << "," << count << "," << ptr->kf.statePost.at<float>(0,0) << "," << ptr->kf.statePost.at<float>(1,0) << "," <<
+                        ptr->kf.statePost.at<float>(2,0) << "," << ptr->human_direction << std::endl;
+            }
+            count++;
             ptr++;
-    }
-    //if (trackers.size()) {
-    //    vector<HeadTrack>::iterator ptr = trackers.begin();
-    int count = 0;
-    for (vector<HeadTrack>::iterator ptr = trackers.begin(); ptr != trackers.end(); ptr++) {
-        char buf[20];
-        sprintf(buf, "human%d", count);
-        count++;
-        q_human.setRPY(0,0,ptr->human_direction*CV_PI/180);
-        transform_human.setOrigin(tf::Vector3(ptr->kf.statePost.at<float>(0,0), ptr->kf.statePost.at<float>(1,0), ptr->kf.statePost.at<float>(2,0)));
-        transform_human.setRotation(q_human);
-        br_.sendTransform(tf::StampedTransform(transform_human, new_time, "world", buf));
+        }
     }
     last_time = new_time;
 }
@@ -1021,14 +1131,30 @@ HeadTrack Triangulator::createNewTrack(float x, float y, float z, Mat var) {
 int main (int argc, char **argv) {
     double baseline = 3.24;
     ros::init(argc, argv, "blimp_triangulator", ros::init_options::AnonymousName);
-    ros::start();
+    ros::NodeHandle nh_priv("~");
+    string file_name;
     ros::Rate loop_rate(10);
-    Triangulator triangulator(baseline);
-    while(ros::ok()) {
-        triangulator.update();
-        ros::spinOnce();
-        loop_rate.sleep();
+    if (nh_priv.getParam("file_name", file_name)) {
+        if (*(file_name.end() - 1) == 0x0a || *(file_name.end() - 1) == '\n')
+            file_name.erase(file_name.end()-1);
+        const string human_file_name = file_name + "_human.csv";
+        const string blimp_file_name = file_name + "_blimp.csv";
+        Triangulator triangulator(blimp_file_name, human_file_name, baseline);
+
+        while(ros::ok()) {
+            triangulator.update();
+            ros::spinOnce();
+            loop_rate.sleep();
+        }
     }
-    
+    else {
+        Triangulator triangulator(baseline);
+
+        while(ros::ok()) {
+            triangulator.update();
+            ros::spinOnce();
+            loop_rate.sleep();
+        }
+    }
     return 0;
 }
