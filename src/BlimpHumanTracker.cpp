@@ -104,6 +104,7 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
     human_pub_.publish(polygon);
     point_msg.header.stamp = msg->header.stamp;
     if (blimp_center != Point2f(0,0)) {
+        point_msg.header.stamp = msg->header.stamp;
         point_msg.point.x = blimp_center.x;
         point_msg.point.y = blimp_center.y;
         center_pub_.publish(point_msg);
@@ -119,7 +120,9 @@ int main (int argc, char **argv) {
     //ros::NodeHandle nh();
     ros::NodeHandle nh_priv("~");
     string file_name;
-    nh_priv.param<std::string>("file_name", file_name, "~/temp.csv");
+    nh_priv.param<std::string>("file_name", file_name, "~/temp");
+    if (*(file_name.end() - 1) == 0x0a || *(file_name.end() - 1) == '\n')
+        file_name.erase(file_name.end()-1);
     string csv_name = file_name + ".csv";
     std::ofstream file(csv_name.c_str());
     BlimpHumanTracker tracker = BlimpHumanTracker(file, file_name.c_str());
