@@ -118,18 +118,18 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     coeffs1[6] =  0.013237;
     coeffs1[8] =  1.492357;
     coeffs1[1] = coeffs1[3] = coeffs1[5] = coeffs1[7] = 0.;
-    coeffs2[0] = -0.003125;
-    coeffs2[2] =  0.001029;
-    coeffs2[4] =  0.007671;
-    coeffs2[6] =  0.013237;
-    coeffs2[8] =  1.492357;
+    coeffs2[0] = -0.003934;
+    coeffs2[2] =  0.002062;
+    coeffs2[4] =  0.010611;
+    coeffs2[6] =  0.017052;
+    coeffs2[8] =  1.495884;
     coeffs2[1] = coeffs2[3] = coeffs2[5] = coeffs2[7] = 0.;
-    R1 = (Mat_<float>(3,3) <<  0.999228,  0.035960, -0.015825,
-							  -0.035960,  0.999353,  0.000285,
-							   0.015825,  0.000285,  0.999875);
-    R2 = (Mat_<float>(3,3) <<  0.996727, -0.075889,  0.027869,
-							   0.075839,  0.997116,  0.002871,
-							  -0.028007, -0.000748,  0.999607);
+    R1 = (Mat_<float>(3,3) <<  0.999968,  0.007896, -0.000898,
+                              -0.007896,  0.999968,  0.000004,
+                               0.000898,  0.000004,  1.000000);
+    R2 = (Mat_<float>(3,3) <<  0.998947, -0.041556,  0.019463,
+                               0.041630,  0.999127,  -0.003437,
+                              -0.019303,  0.004244,  0.999805);
 							  
     mu1 = 157.1979;     
     mv1 = 157.2336;     
@@ -184,18 +184,18 @@ Triangulator::Triangulator(string const &_blimp_file_name, string const &_human_
     coeffs1[6] =  0.013237;
     coeffs1[8] =  1.492357;
     coeffs1[1] = coeffs1[3] = coeffs1[5] = coeffs1[7] = 0.;
-    coeffs2[0] = -0.003125;
-    coeffs2[2] =  0.001029;
-    coeffs2[4] =  0.007671;
-    coeffs2[6] =  0.013237;
-    coeffs2[8] =  1.492357;
+    coeffs2[0] = -0.003934;
+    coeffs2[2] =  0.002062;
+    coeffs2[4] =  0.010611;
+    coeffs2[6] =  0.017052;
+    coeffs2[8] =  1.495884;
     coeffs2[1] = coeffs2[3] = coeffs2[5] = coeffs2[7] = 0.;
-    R1 = (Mat_<float>(3,3) <<  0.999228,  0.035960, -0.015825,
-                              -0.035960,  0.999353,  0.000285,
-                               0.015825,  0.000285,  0.999875);
-    R2 = (Mat_<float>(3,3) <<  0.996727, -0.075889,  0.027869,
-                               0.075839,  0.997116,  0.002871,
-                              -0.028007, -0.000748,  0.999607);
+    R1 = (Mat_<float>(3,3) <<  0.999968,  0.007896, -0.000898,
+                              -0.007896,  0.999968,  0.000004,
+                               0.000898,  0.000004,  1.000000);
+    R2 = (Mat_<float>(3,3) <<  0.998947, -0.041556,  0.019463,
+                               0.041630,  0.999127,  -0.003437,
+                              -0.019303,  0.004244,  0.999805);
 
     mu1 = 157.1979;
     mv1 = 157.2336;
@@ -412,7 +412,6 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
 }
 
 void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_left, const PolygonStampedConstPtr& heads_right) {
-    return;
     ros::Time new_time;
     if (heads_left->header.stamp - heads_right->header.stamp > ros::Duration(0) )     // left after
         new_time = heads_left->header.stamp;
@@ -1129,7 +1128,7 @@ HeadTrack Triangulator::createNewTrack(float x, float y, float z, Mat var) {
 }
 
 int main (int argc, char **argv) {
-    double baseline = 3.24;
+    double baseline = 3.16;
     ros::init(argc, argv, "blimp_triangulator", ros::init_options::AnonymousName);
     ros::NodeHandle nh_priv("~");
     string file_name;
