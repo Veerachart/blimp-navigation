@@ -190,15 +190,17 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
         countBGMask = countNonZero(blimpStartMask);
     }
     else {
-        Mat BG, BGBlimp, BGBlimp_blue;
-        pMOG2.getBackgroundImage(BG);
-        BG.copyTo(BGBlimp, blimpStartMask);
-        inRange(BGBlimp, Scalar(iLowH_1, iLowS_1, iLowV_1), Scalar(iHighH_1, iHighS_1, iHighV_1), BGBlimp_blue);
-        int countBlueBG;
-        countBlueBG = countNonZero(BGBlimp_blue);
-        if (countBlueBG < 0.1*countBGMask) {
-            // Has less than 10 percent of the BG model in the range of blimp's color --> we can stop removing FG by this mask
-            startMaskInUse = false;
+        if (startMaskInUse) {
+            Mat BG, BGBlimp, BGBlimp_blue;
+            pMOG2.getBackgroundImage(BG);
+            BG.copyTo(BGBlimp, blimpStartMask);
+            inRange(BGBlimp, Scalar(iLowH_1, iLowS_1, iLowV_1), Scalar(iHighH_1, iHighS_1, iHighV_1), BGBlimp_blue);
+            int countBlueBG;
+            countBlueBG = countNonZero(BGBlimp_blue);
+            if (countBlueBG < 0.1*countBGMask) {
+                // Has less than 10 percent of the BG model in the range of blimp's color --> we can stop removing FG by this mask
+                startMaskInUse = false;
+            }
         }
     }
     imshow("Blimp", mask_blimp);
@@ -212,18 +214,23 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     imshow("For human detect", fgMaskMOG2);
     
-    if (!detect_human)
-        return false;
+    //if (!detect_human)
+    //    return false;
+    vector<RotatedRect> humans;
+    vector<RotatedRect> heads;
+    vector<RotatedRect> objects, rawBoxes;
+    vector<int> angles;
+    if (detect_human) {
 
     vector<vector<Point> > contours_foreground;
     findContours(fgMaskMOG2.clone(), contours_foreground, CV_RETR_EXTERNAL, CHAIN_APPROX_SIMPLE);
 
-    vector<RotatedRect> humans;
-    vector<RotatedRect> heads;
+    //vector<RotatedRect> humans;
+    //vector<RotatedRect> heads;
     vector<double> weights;
     vector<float> descriptors;
 
-    vector<RotatedRect> objects, rawBoxes;
+    //vector<RotatedRect> objects, rawBoxes;
     vector<RotatedRect> area_heads;					// ROI to search for heads = top half of objects
 
     if(contours_foreground.size() > 0){
@@ -542,7 +549,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 
     vector<float> descriptor;
     int output_class, output_angle;
-    vector<int> classes, angles;
+    vector<int> classes;//, angles;
     //cout << "Current objects:" << endl;
     // Final clean up for large variance objects
     for (vector<TrackedObject>::iterator it = tracked_objects.begin(); it != tracked_objects.end(); ) {
@@ -625,6 +632,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 	        }
 	        ++it;
         }
+    }
     }
     int64 total_time = getTickCount() - start;
 
@@ -855,6 +863,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 		        blimp_bb.points(rect_points);
 		        for(int j = 0; j < 4; j++)
 			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(255,0,0),2,8);
+		        drawContours(input_img, contours_blimp, 0, Scalar(255,64,0), 1);
 	        }
 
 	        for (int track = 0; track < tracked_humans.size(); track++) {
