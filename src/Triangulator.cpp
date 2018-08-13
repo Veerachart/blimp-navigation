@@ -19,6 +19,9 @@ struct HeadTrack {
     Mat sd_rotation_human_t;
     Mat sd_rotation_human;
     int human_direction;
+    int count_stop;     // For marking that the person is not really moving
+    bool isStopped;     // Flag for stopped
+    int last_direction; // The last direction when marked as stopped
 
     int i, j;           // Just for checking in the creating track process
 };
@@ -71,6 +74,7 @@ protected:
     ros::Time last_time_yaw;                // For keeping the last time that yaw data is updated, so the matching between blimp & yaw is not too old
 
     vector<HeadTrack> trackers;
+    float vel_threshold2;                   // for setting threshold of velocity considered as moving (squared)
     bool save;
     std::ofstream file_blimp;
     std::ofstream file_human;
@@ -143,6 +147,8 @@ Triangulator::Triangulator(float _baseline) : sub_left(nh, "cam_left/blimp_cente
     m2 = (mu2+mv2)/2.;
     
     sigma_u = 10.;
+
+    vel_threshold2 = 0.02;              // ~14 cm/s
     ////////////////////////////
     setLookup();
 
@@ -209,6 +215,8 @@ Triangulator::Triangulator(string const &_blimp_file_name, string const &_human_
     m2 = (mu2+mv2)/2.;
 
     sigma_u = 10.;
+
+    vel_threshold2 = 0.02;              // ~14 cm/s
     ////////////////////////////
     setLookup();
 
@@ -216,7 +224,7 @@ Triangulator::Triangulator(string const &_blimp_file_name, string const &_human_
 
     file_blimp << "Time,x,y,z,yaw" << std::endl;
     file_blimp << std::fixed << std::setprecision(6);
-    file_human << "Time,index,x,y,z,direction" << std::endl;
+    file_human << "Time,index,x,y,z,vx,vy,vz,direction" << std::endl;
     file_human << std::fixed << std::setprecision(6);
 }
 
@@ -234,7 +242,7 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
         new_time = point_right->header.stamp;
     
     if ( (point_left->point.x == 0 && point_left->point.y == 0) || (point_right->point.x == 0 && point_right->point.y == 0) ) {
-        ROS_INFO("Not detected");
+        //ROS_INFO("Not detected");
         return;
     }
     //ROS_INFO("(%.2f, %.2f), (%.2f, %.2f)", point_left->point.x, point_left->point.y, point_right->point.x, point_right->point.y);
@@ -337,7 +345,7 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
     
     float disparity = psi1-psi2;
     
-    if(fabs(beta1 - beta2) < 0.15) {        // On the same epipolar line
+    if(fabsf(beta1 - beta2) < 0.15) {        // On the same epipolar line
         if(disparity > 0) {
             float rho = baseline*c_psi2/sin(disparity);
             if (rho <= 10.) {
@@ -380,17 +388,17 @@ void Triangulator::triangulateCallback(const PointStampedConstPtr& point_left, c
                         Mat measurement = (Mat_<float> (3,1) << x_out, y_out, z_out);
                         //std::cout << (measurement - kf_blimp.measurementMatrix*kf_blimp.statePost) << std::endl;
                         Mat x = sd_rotation*(measurement - kf_blimp.measurementMatrix*kf_blimp.statePost);
-                        if (fabs(x.at<float>(0,0)) < 3*sds.at<float>(0,0) &&
-                            fabs(x.at<float>(1,0)) < 3*sds.at<float>(1,0) &&
-                            fabs(x.at<float>(2,0)) < 3*sds.at<float>(2,0)) {
+                        if (fabsf(x.at<float>(0,0)) < 3*sds.at<float>(0,0) &&
+                            fabsf(x.at<float>(1,0)) < 3*sds.at<float>(1,0) &&
+                            fabsf(x.at<float>(2,0)) < 3*sds.at<float>(2,0)) {
                             // within 3 SD in all directions
                             kf_blimp.measurementNoiseCov = var_p;
                             kf_blimp.correct(measurement);
                             SVD::compute(kf_blimp.errorCovPost.colRange(0,3).rowRange(0,3), sds, sd_rotation, sd_rotation_t);
                         }
-                        else {
+                        /*else {
                             ROS_INFO("Outside 3SD");
-                        }
+                        }*/
                     }
                     else {                      // Begin track;
                         kf_blimp.statePost = (Mat_<float>(6,1) << x_out, y_out, z_out, 0., 0., 0.);
@@ -419,7 +427,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
         new_time = heads_right->header.stamp;
     
     if ( !(heads_left->polygon.points.size()) || !(heads_right->polygon.points.size()) ) {
-        ROS_INFO("Not detected");
+        //ROS_INFO("Not detected");
         return;
     }
     
@@ -577,7 +585,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
 
             float disparity = psi1-psi2;
 
-            if(fabs(beta1 - beta2) < 0.2) {        // On the same epipolar line
+            if(fabsf(beta1 - beta2) < 0.2) {        // On the same epipolar line
                 if(disparity > 0) {
                     float rho = baseline*c_psi2/sin(disparity);
                     if (rho <= 10.) {
@@ -623,9 +631,9 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                                 // Check closeness to the tracked object
                                 Mat measurement = (Mat_<float> (3,1) << x_out, y_out, z_out);
                                 Mat x = (ptr->sd_rotation_human)*(measurement - (ptr->kf.measurementMatrix)*(ptr->kf.statePost));
-                                if (fabs(x.at<float>(0,0)) < 3*ptr->sds_human.at<float>(0,0) &&
-                                    fabs(x.at<float>(1,0)) < 3*ptr->sds_human.at<float>(1,0) &&
-                                    fabs(x.at<float>(2,0)) < 3*ptr->sds_human.at<float>(2,0)) {
+                                if (fabsf(x.at<float>(0,0)) < 3*ptr->sds_human.at<float>(0,0) &&
+                                    fabsf(x.at<float>(1,0)) < 3*ptr->sds_human.at<float>(1,0) &&
+                                    fabsf(x.at<float>(2,0)) < 3*ptr->sds_human.at<float>(2,0)) {
                                     // within 3 SD in all directions
                                     for (vector<HeadTrack>::iterator w = waitingList.begin(); w != waitingList.end(); ) {
                                         // check with those in the waiting list if they have been included
@@ -653,13 +661,35 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                                     float vx = ptr->kf.statePost.at<float>(3,0);
                                     float vy = ptr->kf.statePost.at<float>(4,0);
 
-                                    float prob_v_left = 1.f, prob_v_right = 1.f;
-                                    float prob_old_left = 1.f, prob_old_right = 1.f;
-                                    if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
+                                    float prob_v_old = 1.f;             // Prob of old, relative to v
+                                    float prob_old_v = 0.f;             // Prob of v, relative to old
+                                    /*float prob_v_left = 1.f, prob_v_right = 1.f;
+                                    float prob_old_left = 1.f, prob_old_right = 1.f;*/
+                                    float prob_v_left = 0.f, prob_v_right = 0.f;
+                                    float prob_old_left = 0.f, prob_old_right = 0.f;
+                                    float direction_v = 0.f;
+                                    if (vx*vx + vy*vy > vel_threshold2 && !ptr->isStopped) {           // if moving
                                         // get clue from direction of motion
-                                        float direction_v = atan2(vy, vx) * 180./CV_PI;
+                                        float weight_v = 0.1/sqrt(vx*vx + vy*vy);           // 0.5 m ~ human walking speed
+                                        direction_v = atan2(vy, vx) * 180./CV_PI;
+                                        if (direction_v < 0)
+                                            direction_v += 360;
 
-                                        float diff_left = abs(direction_left - direction_v);
+                                        float diff_old = fabsf(human_direction - direction_v);
+
+                                        if (diff_old > 180)
+                                            diff_old = 360 - diff_old;
+
+                                        /*if (diff_old <= 90)
+                                            prob_v_old = weight_v*exp(-diff_old*diff_old/(2*30.*30.));
+                                        else
+                                            prob_v_old = 0;*/
+                                        prob_v_old = weight_v;
+
+                                        /*prob_old_v = 1./weight_v;// * exp(-diff_old*diff_old/(2*15.*15.));     // boost velocity direction when moving faster*/
+                                        prob_old_v = exp(-diff_old*diff_old/(2*30.*30.));
+
+                                        float diff_left = fabsf(direction_left - direction_v);
 
                                         if (diff_left > 180)
                                             diff_left = 360 - diff_left;
@@ -669,7 +699,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                                         else
                                             prob_v_left = 0;
 
-                                        float diff_right = abs(direction_right - direction_v);
+                                        float diff_right = fabsf(direction_right - direction_v);
 
                                         if (diff_right > 180)
                                             diff_right = 360 - diff_right;
@@ -681,20 +711,22 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                                     }
 
 
-                                    float diff_old = abs(direction_left - human_direction);
+                                    float diff_old = fabsf(direction_left - human_direction);
                                     if (diff_old > 180)
                                         diff_old = 360 - diff_old;
-                                    prob_old_left = exp(-diff_old*diff_old/(2*15.*15.));
-                                    diff_old = abs(direction_right - human_direction);
+                                    prob_old_left = exp(-diff_old*diff_old/(2*30.*30.));
+                                    diff_old = fabsf(direction_right - human_direction);
                                     if (diff_old > 180)
                                         diff_old = 360 - diff_old;
-                                    prob_old_right = exp(-diff_old*diff_old/(2*15.*15.));
+                                    prob_old_right = exp(-diff_old*diff_old/(2*30.*30.));
 
-                                    float prob_left = prob_v_left * prob_old_left;
-                                    float prob_right = prob_v_right * prob_old_right;
+                                    /*float prob_left = prob_v_left * prob_old_left;
+                                    float prob_right = prob_v_right * prob_old_right;*/
+                                    float prob_left = max(prob_v_left, prob_old_left);
+                                    float prob_right = max(prob_v_right, prob_old_right);
 
-                                    float d_l, d_r, direction_new;
-                                    if (prob_left + prob_right > 0) {
+                                    float d_l, d_r, d_v;
+                                    if (prob_left + prob_right + prob_v_old + prob_old_v > 0.1) {
                                         if (direction_left - human_direction > 180)
                                             d_l = direction_left - 360;
                                         else if (human_direction - direction_left > 180)
@@ -709,13 +741,35 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                                         else
                                             d_r = direction_right;
 
-                                        direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);
-                                        human_direction = (int) round((human_direction + direction_new)/2.);
+                                        if (direction_v - human_direction > 180)
+                                            d_v = direction_v - 360;
+                                        else if (human_direction - direction_v > 180)
+                                            d_v = direction_v + 360;
+                                        else
+                                            d_v = direction_v;
+
+                                        std::cout << prob_v_old << " x " << human_direction << " + " << prob_old_v << " x " << d_v
+                                                << " + " << prob_left << " x " << d_l << " + " << prob_right << " x " << d_r << std::endl;
+                                        human_direction = (int) round( (prob_v_old*human_direction + prob_old_v*d_v + prob_left*d_l + prob_right*d_r) / (prob_v_old + prob_old_v + prob_left + prob_right) );
+
+                                        //direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);
+                                        //human_direction = (int) round((human_direction + direction_new)/2.);
                                         while (human_direction < 0)
                                             human_direction += 360;
                                         while (human_direction >= 360)
                                             human_direction -= 360;
-                                        ptr->human_direction = human_direction;
+
+                                        if (ptr->isStopped) {
+                                            // standing still, direction should be within +- 45 degree from the direction before stopping
+                                            int diff = human_direction - ptr->last_direction;
+                                            if ((diff <= 45 && diff >= -45) || diff >= 315 || diff <= -315) {
+                                                // only <= 45 degree difference will be used
+                                                ptr->human_direction = human_direction;
+                                            }
+                                        }
+                                        else {
+                                            ptr->human_direction = human_direction;
+                                        }
                                     }
                                     break;
                                 }
@@ -791,6 +845,7 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                 usedLeft[w->i] = true;
                 usedRight[w->j] = true;
                 trackers.push_back(*w);
+                usedTracks.push_back(true);
                 ROS_INFO("New");
             }
         }
@@ -879,13 +934,20 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
             float vx = ptr->kf.statePost.at<float>(3,0);
             float vy = ptr->kf.statePost.at<float>(4,0);
 
-            float prob_v_new = 1.f, prob_v_old = 1.f;
-            float prob_old = 1.f;
-            if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
+            float prob_old_v = 0.f;
+            /*float prob_v_new = 1.f, prob_v_old = 1.f;
+            float prob_old = 1.f;*/
+            float prob_v_new = 0.f, prob_v_old = 1.f;
+            float prob_old = 0.f;
+            float direction_v = 0.f;
+            if (vx*vx + vy*vy > vel_threshold2 && !ptr->isStopped) {           // if moving
                 // get clue from direction of motion
-                float direction_v = atan2(vy, vx) * 180./CV_PI;
+                float weight_v = 0.1/sqrt(vx*vx + vy*vy);           // 0.5 m ~ human walking speed
+                direction_v = atan2(vy, vx) * 180./CV_PI;
+                if (direction_v < 0)
+                    direction_v += 360;
 
-                float diff_new = abs(direction_new - direction_v);
+                float diff_new = fabsf(direction_new - direction_v);
 
                 if (diff_new > 180)
                     diff_new = 360 - diff_new;
@@ -895,26 +957,32 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                 else
                     prob_v_new = 0;
 
-                float diff_old = abs(human_direction - direction_v);
+                float diff_old = fabsf(human_direction - direction_v);
 
                 if (diff_old > 180)
                     diff_old = 360 - diff_old;
 
-                if (diff_old <= 90)
-                    prob_v_old = exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
+                /*if (diff_old <= 90)
+                    prob_v_old = weight_v*exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
                 else
-                    prob_v_old = 0;
+                    prob_v_old = 0;*/
+                prob_v_old = weight_v;
+
+                /*prob_old_v = 1./weight_v;// * exp(-diff_old*diff_old/(2*15.*15.));*/
+                prob_old_v = exp(-diff_old*diff_old/(2*30.*30.));
             }
 
-            float diff_old = abs(direction_new - human_direction);
+            float diff_old = fabsf(direction_new - human_direction);
             if (diff_old > 180)
                 diff_old = 360 - diff_old;
-            prob_old = exp(-diff_old*diff_old/(2*15.*15.));
+            prob_old = exp(-diff_old*diff_old/(2*30.*30.));
 
-            float prob_new = prob_v_new * prob_old / prob_v_old;
+            //float prob_new = prob_v_new * prob_old / prob_v_old;
+            float prob_new = max(prob_v_new, prob_old);
 
-            float d_new;
-            if (prob_new > 0) {
+            float d_new, d_v;
+            if (prob_v_old + prob_old_v + prob_new/*prob_v_new*prob_old*/ > 0.1) {
+            //if (prob_new > 0) {
                 if (direction_new - human_direction > 180)
                     d_new = direction_new - 360;
                 else if (human_direction - direction_new > 180)
@@ -922,7 +990,15 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                 else
                     d_new = direction_new;
 
-                human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
+                if (direction_v - human_direction > 180)
+                    d_v = direction_v - 360;
+                else if (human_direction - direction_v > 180)
+                    d_v = direction_v + 360;
+                else
+                    d_v = direction_v;
+
+                //human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
+                human_direction = (int) round( (prob_v_old*human_direction + prob_old_v*d_v + prob_new/*prob_v_new*prob_old*/*d_new) / (prob_v_old + prob_old_v + prob_new/*prob_v_new*prob_old*/) );
 
                 while (human_direction < 0)
                     human_direction += 360;
@@ -959,13 +1035,20 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
             float vx = ptr->kf.statePost.at<float>(3,0);
             float vy = ptr->kf.statePost.at<float>(4,0);
 
-            float prob_v_new = 1.f, prob_v_old = 1.f;
-            float prob_old = 1.f;
-            if (vx*vx + vy*vy > 0.01) {         // more than 10 cm/s
+            float prob_old_v = 0.f;
+            /*float prob_v_new = 1.f, prob_v_old = 1.f;
+            float prob_old = 1.f;*/
+            float prob_v_new = 0.f, prob_v_old = 1.f;
+            float prob_old = 0.f;
+            float direction_v = 0.f;
+            if (vx*vx + vy*vy > vel_threshold2 && !ptr->isStopped) {           // if moving
                 // get clue from direction of motion
+                float weight_v = 0.1/sqrt(vx*vx + vy*vy);           // 0.5 m ~ human walking speed
                 float direction_v = atan2(vy, vx) * 180./CV_PI;
+                if (direction_v < 0)
+                    direction_v += 360;
 
-                float diff_new = abs(direction_new - direction_v);
+                float diff_new = fabsf(direction_new - direction_v);
 
                 if (diff_new > 180)
                     diff_new = 360 - diff_new;
@@ -975,26 +1058,32 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                 else
                     prob_v_new = 0;
 
-                float diff_old = abs(human_direction - direction_v);
+                float diff_old = fabsf(human_direction - direction_v);
 
                 if (diff_old > 180)
                     diff_old = 360 - diff_old;
 
-                if (diff_old <= 90)
-                    prob_v_old = exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
+                /*if (diff_old <= 90)
+                    prob_v_old = weight_v*exp(-diff_old*diff_old/(2*30.*30.));           // P(velocity) * P(old direction)
                 else
-                    prob_v_old = 0;
+                    prob_v_old = 0;*/
+                prob_v_old = weight_v;
+
+                /*prob_old_v = 1./weight_v;//*exp(-diff_old*diff_old/(2*15.*15.));*/
+                prob_old_v = exp(-diff_old*diff_old/(2*30.*30.));
             }
 
-            float diff_old = abs(direction_new - human_direction);
+            float diff_old = fabsf(direction_new - human_direction);
             if (diff_old > 180)
                 diff_old = 360 - diff_old;
-            prob_old = exp(-diff_old*diff_old/(2*15.*15.));
+            prob_old = exp(-diff_old*diff_old/(2*30.*30.));
 
-            float prob_new = prob_v_new * prob_old / prob_v_old;
+            //float prob_new = prob_v_new * prob_old / prob_v_old;
+            float prob_new = max(prob_v_new, prob_old);
 
-            float d_new;
-            if (prob_new > 0) {
+            float d_new, d_v;
+            if (prob_v_old + prob_old_v + /*prob_v_new**/prob_old > 0.1) {
+            //if (prob_new > 0) {
                 if (direction_new - human_direction > 180)
                     d_new = direction_new - 360;
                 else if (human_direction - direction_new > 180)
@@ -1002,7 +1091,15 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                 else
                     d_new = direction_new;
 
-                human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
+                if (direction_v - human_direction > 180)
+                    d_v = direction_v - 360;
+                else if (human_direction - direction_new > 180)
+                    d_v = direction_v + 360;
+                else
+                    d_v = direction_v;
+
+                //human_direction = (int) round((1-prob_new)*human_direction + prob_new*d_new);
+                human_direction = (int) round( (prob_v_old*human_direction + prob_old_v*d_v + prob_new/*prob_v_new*prob_old*/*d_new) / (prob_v_old + prob_old_v + prob_new/*prob_v_new*prob_old*/) );
 
                 while (human_direction < 0)
                     human_direction += 360;
@@ -1018,11 +1115,21 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
 void Triangulator::update(void) {
     ros::Time new_time = ros::Time::now();
     if (is_tracking) {
+        transform.setOrigin(tf::Vector3(kf_blimp.statePost.at<float>(0,0),kf_blimp.statePost.at<float>(1,0),kf_blimp.statePost.at<float>(2,0)));
+        q.setRPY(0,0,yaw_blimp);
+        //if (new_time - last_time_yaw > ros::Duration(1.0))
+        //    ROS_WARN("Yaw information a bit too old.");
+        transform.setRotation(q);
+        br_.sendTransform(tf::StampedTransform(transform, new_time, "world", "blimp"));
+        if (save) {
+            file_blimp << new_time.toSec() << "," << kf_blimp.statePost.at<float>(0,0) << "," << kf_blimp.statePost.at<float>(1,0) << "," <<
+                    kf_blimp.statePost.at<float>(2,0) << "," << blimp_deg << std::endl;
+        }
         double delta_t = (new_time - last_time).toSec();
         kf_blimp.transitionMatrix.at<float>(0,3) = delta_t;
         kf_blimp.transitionMatrix.at<float>(1,4) = delta_t;
         kf_blimp.transitionMatrix.at<float>(2,5) = delta_t;
-        kf_blimp.predict();     // TODO use delta_t for update (velocity in [m/s])
+        kf_blimp.predict();
         SVD::compute(kf_blimp.errorCovPost.colRange(0,3).rowRange(0,3), sds, sd_rotation, sd_rotation_t);
         if (sds.at<float>(0,0) > 1.0 ||
             sds.at<float>(1,0) > 1.0 ||
@@ -1030,30 +1137,57 @@ void Triangulator::update(void) {
             is_tracking = false;
             ROS_INFO("Removed a blimp");
         }
-        else {
-            transform.setOrigin(tf::Vector3(kf_blimp.statePost.at<float>(0,0),kf_blimp.statePost.at<float>(1,0),kf_blimp.statePost.at<float>(2,0)));
-            q.setRPY(0,0,yaw_blimp);
-            if (new_time - last_time_yaw > ros::Duration(1.0))
-                ROS_WARN("Yaw information a bit too old.");
-            transform.setRotation(q);
-            br_.sendTransform(tf::StampedTransform(transform, new_time, "world", "blimp"));
-            if (save) {
-                file_blimp << new_time.toSec() << "," << kf_blimp.statePost.at<float>(0,0) << "," << kf_blimp.statePost.at<float>(1,0) << "," <<
-                        kf_blimp.statePost.at<float>(2,0) << "," << blimp_deg << std::endl;
-            }
-        }
     }
 
     int count = 0;
     for (vector<HeadTrack>::iterator ptr = trackers.begin(); ptr != trackers.end(); ) {
+        char buf[20];
+        sprintf(buf, "human%d", count);
+        q_human.setRPY(0,0,ptr->human_direction*CV_PI/180);
+        transform_human.setOrigin(tf::Vector3(ptr->kf.statePost.at<float>(0,0), ptr->kf.statePost.at<float>(1,0), ptr->kf.statePost.at<float>(2,0)));
+        transform_human.setRotation(q_human);
+        br_.sendTransform(tf::StampedTransform(transform_human, new_time, "world", buf));
+        if (save) {
+            file_human << new_time.toSec() << "," << count << "," << ptr->kf.statePost.at<float>(0,0) << "," << ptr->kf.statePost.at<float>(1,0) << "," <<
+                    ptr->kf.statePost.at<float>(2,0) << "," << ptr->kf.statePost.at<float>(3,0) << "," << ptr->kf.statePost.at<float>(4,0) << "," <<
+                    ptr->kf.statePost.at<float>(5,0) << "," << ptr->human_direction << std::endl;
+        }
         double delta_t = (new_time - ptr->last_time).toSec();
         ptr->kf.transitionMatrix.at<float>(0,3) = delta_t;
         ptr->kf.transitionMatrix.at<float>(1,4) = delta_t;
         ptr->kf.transitionMatrix.at<float>(2,5) = delta_t;
-        ptr->kf.predict();     // TODO use delta_t for update (velocity in [m/s])
+        ptr->kf.predict();
+        float vx = ptr->kf.statePost.at<float>(3,0);
+        float vy = ptr->kf.statePost.at<float>(4,0);
+        if (ptr->isStopped) {
+            if ((vx*vx + vy*vy) >= vel_threshold2) {
+                ptr->count_stop++;
+                if (ptr->count_stop == 5) {
+                    ptr->isStopped = false;
+                    ptr->count_stop = 0;
+                }
+            }
+            else {
+                ptr->count_stop = 0;
+            }
+        }
+        else {
+            if ((vx*vx + vy*vy) < vel_threshold2) {
+                if (ptr->count_stop == 0)
+                    ptr->last_direction = ptr->human_direction;     // set the current angle as the last direction before counting for stop (avoid problem while counting)
+                ptr->count_stop++;
+                if (ptr->count_stop == 5) {
+                    ptr->isStopped = true;
+                    ptr->count_stop = 0;
+                }
+            }
+            else {
+                ptr->count_stop = 0;
+            }
+        }
         SVD::compute(ptr->kf.errorCovPost.colRange(0,3).rowRange(0,3), ptr->sds_human, ptr->sd_rotation_human, ptr->sd_rotation_human_t);
         ptr->last_time = new_time;
-        // TODO Check & remove
+        count++;
         if (ptr->sds_human.at<float>(0,0) > 1.0 ||
             ptr->sds_human.at<float>(1,0) > 1.0 ||
             ptr->sds_human.at<float>(2,0) > 1.0) {
@@ -1061,17 +1195,6 @@ void Triangulator::update(void) {
                 ROS_INFO("Removed a track");
         }
         else {
-            char buf[20];
-            sprintf(buf, "human%d", count);
-            q_human.setRPY(0,0,ptr->human_direction*CV_PI/180);
-            transform_human.setOrigin(tf::Vector3(ptr->kf.statePost.at<float>(0,0), ptr->kf.statePost.at<float>(1,0), ptr->kf.statePost.at<float>(2,0)));
-            transform_human.setRotation(q_human);
-            br_.sendTransform(tf::StampedTransform(transform_human, new_time, "world", buf));
-            if (save) {
-                file_human << new_time.toSec() << "," << count << "," << ptr->kf.statePost.at<float>(0,0) << "," << ptr->kf.statePost.at<float>(1,0) << "," <<
-                        ptr->kf.statePost.at<float>(2,0) << "," << ptr->human_direction << std::endl;
-            }
-            count++;
             ptr++;
         }
     }
@@ -1124,6 +1247,9 @@ HeadTrack Triangulator::createNewTrack(float x, float y, float z, Mat var) {
     var.copyTo(newTrack.kf.errorCovPre.colRange(0,3).rowRange(0,3));        // Set variance of x,y,z as computed, leave it to diag(1) for velocity
     newTrack.kf.errorCovPre.copyTo(newTrack.kf.errorCovPost);
     SVD::compute(var, newTrack.sds_human, newTrack.sd_rotation_human, newTrack.sd_rotation_human_t);
+    newTrack.human_direction = -1;
+    newTrack.count_stop = 0;
+    newTrack.isStopped = false;
     return newTrack;
 }
 

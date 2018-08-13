@@ -18,7 +18,7 @@ bool compareContourAreas ( vector<Point> contour1, vector<Point> contour2 ) {
 }
 
 BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSave, bool _useFisheyeHOG) : f(_file){
-    area_threshold = 100;
+    area_threshold = 225;
     
     //logfile = new std::ofstream(buffer);
     //*logfile << "time,f1,f2,f3,ftot\n";
@@ -48,9 +48,14 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
 
     save_video = _toSave;
     if (save_video) {
-        string videoName = string(outFileName) + ".avi";
-        //outputVideo.open(videoName, CV_FOURCC('D','I','V','X'), 10, Size(800, 660), true);
-		outputVideo.open(videoName, CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        string videoName = string(outFileName);
+        outputVideo.open(videoName + ".avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        ColorVideo.open(videoName + "_blimp.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        BGVideo.open(videoName + "_BG.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        FGVideo.open(videoName + "_FG.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        FGHumanVideo.open(videoName + "_FGHuman.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        ObjVideo.open(videoName + "_Obj.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        DetectedVideo.open(videoName + "_Detected.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
 		if (!outputVideo.isOpened()) {
 			cerr << "Could not write video." << endl;
 			return;
@@ -155,7 +160,12 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     pMOG2(input_img, fgMaskMOG2);
     fgMaskMOG2 &= circleMask;       // Mask the area outside the circle to remove flickering
     threshold(fgMaskMOG2, fgMaskMOG2, 128, 255, THRESH_BINARY);
-    imshow("FG all", fgMaskMOG2);
+    if (save_video) {
+        Mat save = Mat::zeros(fgMaskMOG2.size(), CV_8UC3);
+        cvtColor(fgMaskMOG2, save, CV_GRAY2BGR);
+        FGVideo << save;
+    }
+//    imshow("FG all", fgMaskMOG2);
     //imshow("Blimp Mask", img_thresholded_b);
     //outputVideo << save;
     
@@ -183,6 +193,15 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
             drawContours(mask_blimp, hull, 0, Scalar(255), CV_FILLED);
         }
     }
+    if (save_video) {
+        Mat save = Mat::zeros(mask_blimp.size(), CV_8UC3);
+        cvtColor(mask_blimp, save, CV_GRAY2BGR);
+        Mat foreground;
+        pMOG2.getBackgroundImage(foreground);
+        ColorVideo << save;
+        BGVideo << foreground;
+    }
+    morphologyEx(mask_blimp, mask_blimp, MORPH_DILATE, Mat::ones(9,9,CV_8U), Point(-1,-1), 1);      // Expand the blimp's mask to remove FG
     if (!startMaskSet) {
         mask_blimp.copyTo(blimpStartMask);
         startMaskSet = true;
@@ -203,7 +222,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
             }
         }
     }
-    imshow("Blimp", mask_blimp);
+//    imshow("Blimp", mask_blimp);
     fgMaskMOG2 = fgMaskMOG2 - mask_blimp;
     if (startMaskInUse)
         fgMaskMOG2 = fgMaskMOG2 - blimpStartMask;
@@ -212,7 +231,12 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_CLOSE, Mat::ones(5,5,CV_8U), Point(-1,-1), 2);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_OPEN, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
     morphologyEx(fgMaskMOG2, fgMaskMOG2, MORPH_DILATE, Mat::ones(3,3,CV_8U), Point(-1,-1), 1);
-    imshow("For human detect", fgMaskMOG2);
+    if (save_video) {
+        Mat save = Mat::zeros(fgMaskMOG2.size(), CV_8UC3);
+        cvtColor(fgMaskMOG2, save, CV_GRAY2BGR);
+        FGHumanVideo << save;
+    }
+//    imshow("For human detect", fgMaskMOG2);
     
     //if (!detect_human)
     //    return false;
@@ -220,6 +244,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     vector<RotatedRect> heads;
     vector<RotatedRect> objects, rawBoxes;
     vector<int> angles;
+    vector<RotatedRect> area_heads;                 // ROI to search for heads = top half of objects
     if (detect_human) {
 
     vector<vector<Point> > contours_foreground;
@@ -231,7 +256,6 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     vector<float> descriptors;
 
     //vector<RotatedRect> objects, rawBoxes;
-    vector<RotatedRect> area_heads;					// ROI to search for heads = top half of objects
 
     if(contours_foreground.size() > 0){
         std::sort(contours_foreground.begin(), contours_foreground.end(), compareContourAreas);
@@ -571,11 +595,12 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
         else {
 	        // Calculate Ferns & direction
 	        if (it->getStatus() == HUMAN) {
-		        Point2f head_vel = it->getHeadVel();
+		        //Point2f head_vel = it->getHeadVel();
+	            Point2f head_vel = it->getBodyVel();
 		        RotatedRect rect = it->getHeadROI();
 
 		        float walking_dir;
-		        if (norm(head_vel) < 1.5) {				// TODO Threshold adjust
+		        if (norm(head_vel) < it->getBodyROI().size.width/20.) {				// TODO Threshold adjust
 			        walking_dir = -1.;					// Not enough speed, no clue
 		        }
 		        else {
@@ -583,7 +608,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
                     walking_dir = 180. + rect.angle - atan2(head_vel.x, -head_vel.y)*180./CV_PI;
                     while (walking_dir < 0.)
                         walking_dir += 360.;                    // [0, 360) range. Negative means no clue
-                    while (walking_dir > 360.)
+                    while (walking_dir >= 360.)
                         walking_dir -= 360.;
 		        }
 		        //cout << head_vel << " Moving in " << walking_dir << " degree direction" << endl;
@@ -811,6 +836,9 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
         }
         f << double(total_time)/getTickFrequency() * 1000. << endl;         // millisecond
     }
+            Mat objMat, detectedMat;
+            input_img.copyTo(objMat);
+            input_img.copyTo(detectedMat);
         if (toDraw) {
 	        //for(int i = 0; i < contours_foreground.size(); i++){
 	        //	drawContours(input_img, contours_foreground, i, Scalar(0,255,0), 1, CV_AA);
@@ -818,23 +846,32 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 	        for (int i = 0; i < humans.size(); i++) {
 		        Point2f rect_points[4];
 		        humans[i].points(rect_points);
-		        for(int j = 0; j < 4; j++)
+		        for(int j = 0; j < 4; j++) {
+			        line( detectedMat, rect_points[j], rect_points[(j+1)%4], Scalar(255,255,0),2,8);
 			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(255,255,0),2,8);
+		        }
 	        }
 	        for (int i = 0; i < heads.size(); i++) {
 		        Point2f rect_points[4];
 		        heads[i].points(rect_points);
-		        for(int j = 0; j < 4; j++)
+		        for(int j = 0; j < 4; j++) {
+			        line( detectedMat, rect_points[j], rect_points[(j+1)%4], Scalar(0,255,255),2,8);
 			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(0,255,255),2,8);
+		        }
 	        }
 	        for (int i = 0; i < objects.size(); i++) {
 		        Point2f rect_points[4];
 		        objects[i].points(rect_points);
-		        for(int j = 0; j < 4; j++)
+		        for(int j = 0; j < 4; j++) {
+			        line( objMat, rect_points[j], rect_points[(j+1)%4], Scalar(0,0,255),2,8);
 			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(0,0,255),2,8);
+		        }
 		        rawBoxes[i].points(rect_points);
 		        for(int j = 0; j < 4; j++)
-			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(255,0,0),1,8);
+			        line( objMat, rect_points[j], rect_points[(j+1)%4], Scalar(255,255,0),1,8);
+                area_heads[i].points(rect_points);
+                for(int j = 0; j < 4; j++)
+                    line( objMat, rect_points[j], rect_points[(j+1)%4], Scalar(0,255,0),2,8);
 	        }
 
 	        for (int track = 0; track < tracked_objects.size(); track++) {
@@ -873,7 +910,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 		        Point2f rect_points[4];
 		        human.getBodyROI().points(rect_points);
 		        for(int j = 0; j < 4; j++)
-			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(192,192,0),1,8);
+			        line( input_img, rect_points[j], rect_points[(j+1)%4], Scalar(192,192,0),2,8);
 		        //circle(input_img, object.getPointBody(), 3*object.getSdBody(), Scalar(192,192,0), 2);
 
 		        //circle(input_img, object.getPointHead(), 2, Scalar(192,192,192), -1);
@@ -885,9 +922,9 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 		        float angle = (dir - human.getHeadROI().angle)*CV_PI/180.;
 		        arrowedLine(input_img, human.getPointHead(), human.getPointHead() + 50.*Point2f(sin(angle), cos(angle)), Scalar(64,223,0), 2);
 		        char buffer[10];
-                arrowedLine(input_img, human.getPointHead(), human.getPointHead() + 10.*human.getHeadVel(), Scalar(0,0,255), 1);
-		        sprintf(buffer, "%d, %d", angles[track], human.getDirection());
-		        putText(input_img, buffer , human.getBodyROI().center+50.*Point2f(-sin(human.getHeadROI().angle*CV_PI/180.),cos(human.getHeadROI().angle*CV_PI/180.)), FONT_HERSHEY_PLAIN, 1, Scalar(255,0,255), 2);
+                //arrowedLine(input_img, human.getPointHead(), human.getPointHead() + 10.*human.getHeadVel(), Scalar(0,0,255), 1);
+		        //sprintf(buffer, "%d, %d", angles[track], human.getDirection());
+		        //putText(input_img, buffer , human.getBodyROI().center+50.*Point2f(-sin(human.getHeadROI().angle*CV_PI/180.),cos(human.getHeadROI().angle*CV_PI/180.)), FONT_HERSHEY_PLAIN, 1, Scalar(255,0,255), 2);
 	        }
 
 	        //imshow("FG Mask MOG 2", fgMaskMOG2);
@@ -895,8 +932,11 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
 	        //resize(input_img, resized, Size(500,500));
 	        //imshow("Detection", resized);
         }
-        if(save_video)
+        if(save_video) {
 	        outputVideo << input_img;
+            ObjVideo << objMat;
+            DetectedVideo << detectedMat;
+        }
         //waitKey(1);
         //std::cout << end-begin << std::endl;
         count_img++;

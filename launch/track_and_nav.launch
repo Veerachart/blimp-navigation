@@ -2,12 +2,14 @@
     <arg name="save_name" default="test"/>
     <group ns="blimp">
         <node name="blimp_controller" pkg="blimp_navigation" type="blimp_controller_node" output="screen">
-            <param name="file_name" command="date +'$(find blimp_navigation)/log/%m%d_%H%M-controller_$(arg save_name)_l.csv'"/>
+            <param name="file_name" command="date +'$(find blimp_navigation)/log/%m%d_%H%M-controller_$(arg save_name).csv'"/>
         </node>
-        <node name="pid_ux" pkg="pid" type="controller">
-            <param name="Kp" value="-40.0" />
+        <node name="pid_ux_f" pkg="pid" type="controller">
+            <!--param name="Kp" value="-80.0" /-->
+            <param name="Kp" value="-35.0" />
             <param name="Ki" value="-0.0" />
-            <param name="Kd" value="-300.0" />
+            <!--param name="Kd" value="-500.0" /-->
+            <param name="Kd" value="-250.0" />
             <param name="upper_limit"  value="64.0" />
             <param name="lower_limit"  value="-64.0" />
             <param name="windup_limit" value="64.0" />
@@ -15,37 +17,51 @@
             <param name="max_loop_frequency" value="12.0" />
             <param name="topic_from_controller" value="u_x" />
             <param name="topic_from_plant" value="dist" />
-            <param name="reset_pid_topic" value="reset_x" />
+            <param name="cutoff_frequency" value="2" />
             <remap from="setpoint" to="/setpoint_x" />
+            <param name="pid_enable_topic" value="stereo_enable" />
+            <param name="reset_pid_topic" value="stereo_reset" />
         </node>
-        <node name="pid_uy" pkg="pid" type="controller">
-            <param name="Kp" value="-100.0" />
+        <node name="pid_uy_f" pkg="pid" type="controller">
+            <param name="Kp" value="-80.0" />
             <param name="Ki" value="-0.0" />
-            <param name="Kd" value="-600.0" />
-            <param name="upper_limit"  value="128.0" />
-            <param name="lower_limit"  value="-128.0" />
-            <param name="windup_limit" value="128.0" />
+            <param name="Kd" value="-100.0" />
+            <param name="upper_limit"  value="96.0" />
+            <param name="lower_limit"  value="-96.0" />
+            <param name="windup_limit" value="96.0" />
             <param name="min_loop_frequency" value="8.0" />
             <param name="max_loop_frequency" value="12.0" />
             <param name="topic_from_controller" value="u_y" />
             <param name="topic_from_plant" value="dist_y" />
+            <param name="cutoff_frequency" value="2" />
             <remap from="setpoint" to="/setpoint_y" />
-            <param name="reset_pid_topic" value="reset_y" />
+            <param name="pid_enable_topic" value="stereo_enable" />
+            <param name="reset_pid_topic" value="stereo_reset" />
         </node>
-        <node name="pid_uz" pkg="pid" type="controller">
-            <param name="Kp" value="-200.0" /> <!-- Tuned, hopefully -->
+        <node name="pid_uz_f" pkg="pid" type="controller" output="screen">
+            <!--param name="Kp" value="-100.0" /--> <!-- Tuned, hopefully -->
+            <param name="Kp" value="-60.0" />
             <param name="Ki" value="-10.0" />
-            <param name="Kd" value="-900.0" />
+            <!--param name="Kd" value="-1500.0" /-->
+            <param name="Kd" value="-400.0" />
             <param name="upper_limit"  value="128.0" />
             <param name="lower_limit"  value="-128.0" />
             <param name="windup_limit" value="128.0" />
             <param name="min_loop_frequency" value="8.0" />
             <param name="max_loop_frequency" value="12.0" />
             <param name="topic_from_controller" value="u_z" />
+            <param name="cutoff_frequency" value="2" />
             <param name="topic_from_plant" value="z" />
             <remap from="setpoint" to="/setpoint_z" />
+            <param name="pid_enable_topic" value="stereo_enable" />
+            <param name="reset_pid_topic" value="stereo_reset" />
         </node>
-        <node name="ble_blimp" pkg="ble_joy_controller" type="ble_pid_node.py" output="screen" > </node>
+        <!--include file="$(find gscam)/launch/cam_gs.launch" output="screen">
+            <arg name="VIEW" value="true"/>
+        </include-->
+        <node name="ble_blimp" pkg="ble_joy_controller" type="ble_pid_node.py" output="screen" >
+            <param name="save_name" value="$(arg save_name)" />
+        </node>
     </group>
     
     <!--<node name="streamer" pkg="blimp_navigation" type="stream_file_node" />-->
@@ -62,20 +78,41 @@
         <param name="file_name" command="date +'$(find blimp_navigation)/log/%m%d_%H%M-$(arg save_name)_r'"/>
     </node>
     
-    <node name="triangulator" pkg="blimp_navigation" type="triangulate_blimp_node">
+    <node name="triangulator" pkg="blimp_navigation" type="triangulate_blimp_node" output="screen">
         <param name="file_name" command="date +'$(find blimp_navigation)/log/%m%d_%H%M-$(arg save_name)'"/>
     </node>
+    
+    <!--<node pkg = "tf" type = "static_transform_publisher" name = "tf_human" args="1 1 1.8 -1.570796 0 0 '/world' '/human' 100"/>
+    <node pkg = "tf" type = "static_transform_publisher" name = "tf_blimp" args="3 -1 0.7 0 0 0 '/world' '/blimp' 100"/>-->
+    
+    <node name="dynamic_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>
+    
+    <include file="$(find blimp_navigation)/launch/visual_servo.launch">
+        <arg name="save_name" value="$(arg save_name)" />
+    </include>
     
     <node pkg="rostopic" type="rostopic" name="set_x" args="pub /setpoint_x std_msgs/Float64 0.0" />
     <node pkg="rostopic" type="rostopic" name="set_y" args="pub /setpoint_y std_msgs/Float64 0.0" />
     <node pkg="rostopic" type="rostopic" name="set_z" args="pub /setpoint_z std_msgs/Float64 0.0" />
     
-    <node name="dynamic_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>
+    <node name="video_save_l" pkg="image_view" type="video_recorder">
+        <param name="filename" command="date +'/media/veerachart/Seagate Backup Plus Drive/Onboard_camera/%m%d_%H%M-cam_left_$(arg save_name).avi'"/>
+        <param name="fps" value="10" />
+        <param name="codec" value="MJPG" />
+        <remap from="image" to="/cam_left/raw_video" />
+    </node>
     
-    <node name="view_l" pkg="image_view" type="image_view">
+    <node name="video_save_r" pkg="image_view" type="video_recorder">
+        <param name="filename" command="date +'/media/veerachart/Seagate Backup Plus Drive/Onboard_camera/%m%d_%H%M-cam_right_$(arg save_name).avi'"/>
+        <param name="fps" value="10" />
+        <param name="codec" value="MJPG" />
+        <remap from="image" to="/cam_right/raw_video" />
+    </node>
+    
+    <!--<node name="view_l" pkg="image_view" type="image_view">
         <remap from="image" to="cam_left/detection_image" />
     </node>
     <node name="view_r" pkg="image_view" type="image_view">
         <remap from="image" to="cam_right/detection_image" />
-    </node>
+    </node>-->
 </launch>

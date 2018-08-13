@@ -275,6 +275,10 @@ Point2f TrackedObject::getHeadVel() {
 	return Point2f(headKF.statePost.at<float>(2,0), headKF.statePost.at<float>(3,0));
 }
 
+Point2f TrackedObject::getBodyVel() {
+    return Point2f(objectKF.statePost.at<float>(2,0), objectKF.statePost.at<float>(3,0));
+}
+
 int TrackedObject::getDirection() {
 	return headDirection;
 }
@@ -333,7 +337,7 @@ void TrackedObject::updateDirection(int estimation, int movingDirection) {
     }
     // More than that, update with the moving direction instead
     else {
-        if (movingDirection > 0) {
+        if (movingDirection >= 0) {
             // Moving
             if (abs(movingDirection - headDirection) >= 180) {
                 // crossing 0,360 line

@@ -40,6 +40,7 @@ public:
 	RotatedRect getBodyROI();
 	RotatedRect getHeadROI();
 	Point2f getHeadVel();
+	Point2f getBodyVel();
 	int getStatus();
 	float threshold();
 	int getDirection();

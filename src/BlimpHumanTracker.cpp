@@ -86,13 +86,13 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
     //ROS Stuff
     image_pub_.publish(cv_ptr->toImageMsg());
     for (int hum = 0; hum < tracked_humans.size(); hum++) {
-        Point2f head = tracked_humans[hum].getPointHead();
-        point.x = head.x;
-        point.y = head.y;
-        //Point2f body = tracked_humans[hum].getPointBody();
-        //point.x = body.x;
-        //point.y = body.y;
-        point.z = 90.f - (float) tracked_humans[hum].getDirection() + tracked_humans[hum].getHeadROI().angle;
+        //Point2f head = tracked_humans[hum].getPointHead();
+        //point.x = head.x;
+        //point.y = head.y;
+        Point2f body = tracked_humans[hum].getPointBody();
+        point.x = body.x;
+        point.y = body.y;
+        point.z = 90.f - (float) tracked_humans[hum].getDirection() + tracked_humans[hum].getBodyROI().angle;
         while (point.z >= 360.)
             point.z -= 360.;
         while (point.z < 0)
@@ -109,7 +109,7 @@ void BlimpHumanTracker::imageCallback (const sensor_msgs::Image::ConstPtr& msg) 
         point_msg.point.y = blimp_center.y;
         center_pub_.publish(point_msg);
     }
-    waitKey(1);
+    //waitKey(1);
     next_msg.data = true;
     next_pub_.publish(next_msg);
 }
