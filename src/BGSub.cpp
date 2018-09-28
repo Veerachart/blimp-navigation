@@ -50,12 +50,12 @@ BGSub::BGSub(bool _toDraw, ofstream &_file, const char* outFileName, bool _toSav
     if (save_video) {
         string videoName = string(outFileName);
         outputVideo.open(videoName + ".avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
-        ColorVideo.open(videoName + "_blimp.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        /*ColorVideo.open(videoName + "_blimp.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
         BGVideo.open(videoName + "_BG.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
         FGVideo.open(videoName + "_FG.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
         FGHumanVideo.open(videoName + "_FGHuman.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
         ObjVideo.open(videoName + "_Obj.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
-        DetectedVideo.open(videoName + "_Detected.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);
+        DetectedVideo.open(videoName + "_Detected.avi", CV_FOURCC('D','I','V','X'), 10, Size(768, 768), true);*/
 		if (!outputVideo.isOpened()) {
 			cerr << "Could not write video." << endl;
 			return;
@@ -163,7 +163,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     if (save_video) {
         Mat save = Mat::zeros(fgMaskMOG2.size(), CV_8UC3);
         cvtColor(fgMaskMOG2, save, CV_GRAY2BGR);
-        FGVideo << save;
+        //FGVideo << save;
     }
 //    imshow("FG all", fgMaskMOG2);
     //imshow("Blimp Mask", img_thresholded_b);
@@ -198,8 +198,8 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
         cvtColor(mask_blimp, save, CV_GRAY2BGR);
         Mat foreground;
         pMOG2.getBackgroundImage(foreground);
-        ColorVideo << save;
-        BGVideo << foreground;
+        //ColorVideo << save;
+        //BGVideo << foreground;
     }
     morphologyEx(mask_blimp, mask_blimp, MORPH_DILATE, Mat::ones(9,9,CV_8U), Point(-1,-1), 1);      // Expand the blimp's mask to remove FG
     if (!startMaskSet) {
@@ -234,7 +234,7 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
     if (save_video) {
         Mat save = Mat::zeros(fgMaskMOG2.size(), CV_8UC3);
         cvtColor(fgMaskMOG2, save, CV_GRAY2BGR);
-        FGHumanVideo << save;
+        //FGHumanVideo << save;
     }
 //    imshow("For human detect", fgMaskMOG2);
     
@@ -934,8 +934,8 @@ bool BGSub::processImage (Mat &input_img, bool detect_human) {
         }
         if(save_video) {
 	        outputVideo << input_img;
-            ObjVideo << objMat;
-            DetectedVideo << detectedMat;
+            //ObjVideo << objMat;
+            //DetectedVideo << detectedMat;
         }
         //waitKey(1);
         //std::cout << end-begin << std::endl;

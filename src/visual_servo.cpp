@@ -12,6 +12,7 @@
 #include <std_msgs/Bool.h>
 #include <geometry_msgs/Pose.h>
 #include <tf/transform_listener.h>
+#include <fstream>
 
 using namespace std;
 
@@ -29,6 +30,7 @@ protected:
     ros::Publisher stereo_resetter_pub_;            // For resetting fisheye stereo's PID controller
     ros::Publisher new_goal_from_blimp_pub_;        // For publishing the last face's direction before returning control to stereo
                                                     // So that the stereo will try to place the blimp in front of the face
+    ros::Publisher reset_pub_;                      // Send out a msg when the face cannot be matched with the human for a while
     tf::TransformListener listener;
 
     std_msgs::Float64 msg_y, msg_size, msg_lr;
@@ -49,19 +51,23 @@ protected:
 
     short current_yaw;
 
+    int count_face_nomatch;
+
     bool isTrackingFace;
     void switchOnVisualServo();
     void switchOffVisualServo();
     bool isFaceLegit(int x, int y, int size);
 
+    ofstream f_write;
+
 public:
-    VisualServo();
+    VisualServo(string outputFileName);
     void faceCallback(const gpu_opencv::FaceServo::ConstPtr &msg);
     void yawCallback(const std_msgs::Int16::ConstPtr &msg);
     void run();
 };
 
-VisualServo::VisualServo() {
+VisualServo::VisualServo(string outputFileName = "save.csv") : f_write(outputFileName.c_str(),std::ios::out) {
     ros::NodeHandle nh;
     face_sub_ = nh.subscribe("face", 1, &VisualServo::faceCallback, this);
     yaw_sub_ = nh.subscribe("yaw", 1, &VisualServo::yawCallback, this);
@@ -77,6 +83,8 @@ VisualServo::VisualServo() {
     stereo_resetter_pub_ = nh.advertise<std_msgs::Bool>("stereo_reset", 1);
     new_goal_from_blimp_pub_ = nh.advertise<geometry_msgs::Pose>("new_goal_from_blimp", 1);
 
+    reset_pub_ = nh.advertise<std_msgs::Bool>("face_reset",1);
+
     false_msg.data = false;
     true_msg.data = true;               // Preset the messages
     isTrackingFace = false;
@@ -86,20 +94,33 @@ VisualServo::VisualServo() {
     last_humantf_time = ros::Time(0);
 
     current_yaw = 0;
+    count_face_nomatch = 0;
+    f_write << "time,x,y,size,direction" << endl;
 }
 
 void VisualServo::faceCallback(const gpu_opencv::FaceServo::ConstPtr &msg) {
+    last_time = msg->header.stamp;
+
+    f_write << last_time << "," << msg->x << "," << msg->y << "," << msg->size << "," << msg->direction << endl;
     if (!isTrackingFace) {
         if (isFaceLegit(msg->x, msg->y, msg->size)) {
+        //if (true) {
+        //    isTrackingFace = true;
             ROS_INFO("The face is legit, start tracking this face.");
+            count_face_nomatch = 0;
         }
         else {
+            count_face_nomatch++;
+            if (count_face_nomatch >= 10) {
+                reset_pub_.publish(true_msg);
+                count_face_nomatch = 0;
+            }
             return;
         }
     }
     msg_y.data = (double) msg->y;
     err_y_pub_.publish(msg_y);
-    msg_size.data = (double) msg->size;
+    msg_size.data = (double) 60./msg->size;
     err_size_pub_.publish(msg_size);
 
     int direction = msg->direction;         // 0: front, 1: left, -1:right
@@ -120,7 +141,7 @@ void VisualServo::faceCallback(const gpu_opencv::FaceServo::ConstPtr &msg) {
         est_human = blimp + tf::Vector3(60./msg->size*cos(yaw+offset), 60./msg->size*sin(yaw+offset), 0.3*msg->y/msg->size + 0.6);      // 40 cm from balloon's center to camera (approx)
         // from the estimated human_position, set the goal
 
-        tf::Vector3 new_goal = est_human + tf::Vector3(1.2*cos(yaw+offset+double(direction)*PI/4.+PI), 1.2*sin(yaw+offset+double(direction)*PI/4.+PI), -0.4);
+        tf::Vector3 new_goal = est_human + tf::Vector3(1.0*cos(yaw+offset+double(direction)*PI/4.+PI), 1.0*sin(yaw+offset+double(direction)*PI/4.+PI), -0.4);
         tf::Quaternion new_goal_q;
         new_goal_yaw = yaw+offset+direction*PI/4.;
         new_goal_q.setRPY(0, 0, new_goal_yaw);
@@ -141,8 +162,6 @@ void VisualServo::faceCallback(const gpu_opencv::FaceServo::ConstPtr &msg) {
         yaw_pub_.publish(msg_yaw);
         ROS_INFO("Set yaw to %d", yaw);
     }
-
-    last_time = msg->header.stamp;
 }
 
 void VisualServo::yawCallback(const std_msgs::Int16::ConstPtr &msg) {
@@ -166,13 +185,13 @@ void VisualServo::run() {
     catch (tf::TransformException &ex){
         ROS_ERROR("%s", ex.what());
     }
-    if (ros::Time::now() - last_time > ros::Duration(5.0)) {
+    if (ros::Time::now() - last_time > ros::Duration(3.0)) {
         // not detected more than 2 seconds
         if (isTrackingFace) {
             // Turn off visual servo if it was running, else OK
             msg_y.data = 0.;
             err_y_pub_.publish(msg_y);
-            msg_size.data = 50.;
+            msg_size.data = 60.;
             err_size_pub_.publish(msg_size);
             msg_lr.data = 0.;
             left_right_pub_.publish(msg_lr);
@@ -305,7 +324,10 @@ bool VisualServo::isFaceLegit(int x, int y, int size) {
 
 int main(int argc, char** argv) {
     ros::init(argc, argv, "visual_servo_node");
-    VisualServo servoNode;
+    ros::NodeHandle nh_private("~");
+    string save_name;
+    nh_private.getParam("filename", save_name);
+    VisualServo servoNode(save_name);
     ros::Rate r(30);
 
     while (ros::ok()) {

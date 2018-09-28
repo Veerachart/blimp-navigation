@@ -36,6 +36,7 @@ class BlimpController {
         tf::Vector3 goal_human;
         tf::Vector3 human_avg;
         float human_yaw_avg;
+        float human_yaw0;       // The first yaw angle -- determine the direction of averaging
         tf::Quaternion q;
         tf::Quaternion q_goal;
         short int state;        // 0 = Stop; 1 = Turn; 2 = Move
@@ -57,12 +58,17 @@ class BlimpController {
         bool use_human_control;     // flag to use human position and direction to set the goal of the blimp
         bool goal_locked;           // flag that the goal is now locked and fixed for navigation
         bool to_navigate;           // used to start the navigation (so that we don't start driving from the beginning)
-        bool goal_changed;          // used to mark that the goal has been changed (either manually or by human position change)
         float x_low, x_high;        // boundary of the area (x)
         float y_low, y_high;        // boundary of the area (y)
         bool using_stereo;          // Flag for switching on/off the controller based on fisheye stereo (changed by stereo_enable msg)
         ros::Time last_human_time;  // last time human0 is found in the tf
         
+        // For blocking goal changing just after new goal received from visual servo (better human direction estimation, and should
+        // not be overwritten by fisheye direction estimation.)
+        bool got_new_goal;
+        tf::Vector3 est_human_from_face;
+        int count_human_moved;      // counter for checking if the person already moved from where he/she was seen by blimp
+
         std::ofstream file;          // file for saving goal position
 
         bool inGoalVicinity(tf::Vector3 distVec) {
@@ -248,7 +254,7 @@ class BlimpController {
             prev_z = 1e6;
             prev_angle = -2*PI;
             yaw_blimp = 0.;
-            goal_vicinity_maintain = 0.5;       // 50 cm
+            goal_vicinity_maintain = 0.6;       // 60 cm
             goal_vicinity_approach = 0.3;       // 30 cm
             stop_criteria_rotate = 2.*PI/180.;
             stop_criteria_move = 0.005;      // 5 cm/s at 10 Hz
@@ -260,13 +266,15 @@ class BlimpController {
             count_stop = 0;
             goal_locked = false;
             to_navigate = false;
-            goal_changed = false;
             using_stereo = true;                // Initiate to using the stereo pair for control
             human_yaw_avg = 0.f;
+            human_yaw0 = 0.f;
             x_low = -1.5;
             x_high = 4.7;
             y_low = -2.7;
             y_high = 2.7;
+            got_new_goal = false;
+            count_human_moved = 0;
 
             file << "Time,state,goal_x,goal_y,goal_z,goal_yaw" << std::endl;
             file << std::fixed << std::setprecision(6);
@@ -279,7 +287,6 @@ class BlimpController {
                 q.setRPY(0.0, 0.0, config.groups.goal.yaw*PI/180);
                 transform.setOrigin(goal);
                 transform.setRotation(q);
-                goal_changed = true;
                 br.sendTransform(tf::StampedTransform(transform, ros::Time::now(), "world", "goal"));
                 ROS_INFO("Goal changed");
             }
@@ -306,6 +313,7 @@ class BlimpController {
                 prev_z = 1e6;
                 prev_angle = -2*PI;
                 state = 0;
+                got_new_goal = false;
             }
         }
 
@@ -322,6 +330,9 @@ class BlimpController {
             transform.setRotation(goal_quat);
             goal_locked = true;             // We have set the goal, lock this
             ROS_INFO("Set goal to %.2f, %.2f, %.2f, with yaw %.2f", transform.getOrigin().x(), transform.getOrigin().y(), transform.getOrigin().z(), tf::getYaw(transform.getRotation())*180./PI);
+            double yaw_goal = tf::getYaw(goal_quat);
+            est_human_from_face = goal_origin - tf::Vector3(1.2*cos(yaw_goal+PI), 1.2*sin(yaw_goal+PI), -0.4);
+            got_new_goal = true;
         }
 
         void publish(){
@@ -352,6 +363,27 @@ class BlimpController {
                         tf::Quaternion q_human = human_tf.getRotation();
                         float yaw = tf::getYaw(q_human);
                         //ROS_INFO("Now: %.4f, %.4f, %.4f\t%.4f", human.x(), human.y(), human.z(), yaw*180./PI);
+
+                        if (got_new_goal) {
+                            // The goal has been set by estimated human position/direction from visual servo.
+                            // So check if this human position is close to that estimation or not.
+                            // If close, visual servo estimation should be more accurate and then ignore this.
+                            if (inGoalVicinity(human - est_human_from_face)) {
+                                ROS_INFO("New human is close to the estimated position, do not use it.");
+                                return;
+                            }
+                            // Else, trust the fisheye estimation, and reset the flag
+                            else {
+                                // Count
+                                count_human_moved++;
+                                if (count_human_moved > 10) {
+                                    // reset flag
+                                    ROS_INFO("Human has moved, start using fisheye to set goal.");
+                                    count_human_moved = 0;
+                                    got_new_goal = false;
+                                }
+                            }
+                        }
                         if (goal_locked) {
                             tf::StampedTransform check_tf;
                             ros::Time common_time;
@@ -377,42 +409,51 @@ class BlimpController {
                             //std::cout << check_vec.x() << "," << check_vec.y() << "," << check_vec.z() << "\t" << yaw_diff*180./PI << std::endl;
                             if (check_vec.x() < distance_to_goal - distance_border ||
                                 check_vec.x() > distance_to_goal + distance_border ||
-                                check_vec.z() < 1.0 - distance_border ||
-                                check_vec.z() > 1.0 + distance_border ||
+                                //check_vec.z() < 1.0 - distance_border ||              // Z should be separated and not counted
+                                //check_vec.z() > 1.0 + distance_border ||
                                 fabs(atan2(check_vec.y(), check_vec.x())) > PI/4. ||
                                 fabsf(yaw_diff) < 3.*PI/4. ) {
                                 human_avg += human;
                                 if (count_lock == 0) {
                                     // First one, no need to care about the sign
-                                    human_yaw_avg += yaw;
+//                                    human_yaw_avg += yaw;
+                                    human_yaw0 = yaw;
                                 }
                                 else {
                                     // From the second, need to keep it on the same side as the first (wrapping problem)
-                                    float current_avg = human_yaw_avg / float(count_lock);
-                                    float diff = yaw - current_avg;
-                                    float gap_plus, gap_minus;
+                                    float diff = yaw - human_yaw0;
+//                                    float gap_plus, gap_minus;
+//                                    if (diff > PI) {
+//                                        gap_plus = PI - yaw;
+//                                        gap_minus = human_yaw0 + PI;
+//                                        if (gap_plus >= gap_minus) {
+//                                            human_yaw_avg += diff + 2*PI;
+//                                        }
+//                                        else {
+//                                            human_yaw_avg += diff - 2*PI;
+//                                        }
+//                                    }
+//                                    else if (diff <= -PI) {
+//                                        gap_plus = PI - human_yaw0;
+//                                        gap_minus = yaw + PI;
+//                                        if (gap_plus >= gap_minus) {
+//                                            human_yaw_avg += diff + 2*PI;
+//                                        }
+//                                        else {
+//                                            human_yaw_avg += diff - 2*PI;
+//                                        }
+//                                    }
+//                                    else {
+//                                        human_yaw_avg += diff;
+//                                    }
                                     if (diff > PI) {
-                                        gap_plus = PI - yaw;
-                                        gap_minus = current_avg + PI;
-                                        if (gap_plus >= gap_minus) {
-                                            human_yaw_avg += yaw + 2*PI;
-                                        }
-                                        else {
-                                            human_yaw_avg += yaw - 2*PI;
-                                        }
+                                        human_yaw_avg += diff - 2*PI;
                                     }
                                     else if (diff <= -PI) {
-                                        gap_plus = PI - current_avg;
-                                        gap_minus = yaw + PI;
-                                        if (gap_plus >= gap_minus) {
-                                            human_yaw_avg += yaw + 2*PI;
-                                        }
-                                        else {
-                                            human_yaw_avg += yaw - 2*PI;
-                                        }
+                                        human_yaw_avg += diff + 2*PI;
                                     }
                                     else {
-                                        human_yaw_avg += yaw;
+                                        human_yaw_avg += diff;
                                     }
                                 }
                                 count_lock++;
@@ -422,6 +463,7 @@ class BlimpController {
                                     // reaverage goal
                                     human_avg /= float(count_lock);
                                     human_yaw_avg /= float(count_lock);
+                                    human_yaw_avg += human_yaw0;
                                     count_lock = 0;
                                     while (human_yaw_avg <= -PI)
                                         human_yaw_avg += 2*PI;
@@ -441,7 +483,6 @@ class BlimpController {
                                     human_avg = tf::Vector3(0.,0.,0.);  // reset
                                     human_yaw_avg = 0.f;        // reset
                                     count_lock = 0;             // reset counter
-                                    goal_changed = true;
                                     ROS_INFO("Renew goal");
                                 }
                             }
@@ -459,35 +500,44 @@ class BlimpController {
                                 human_avg += human;
                                 if (count_lock == 0) {
                                     // First one, no need to care about the sign
-                                    human_yaw_avg += yaw;
+//                                    human_yaw_avg += yaw;
+                                    human_yaw0 = yaw;
                                 }
                                 else {
                                     // From the second, need to keep it on the same side as the first (wrapping problem)
-                                    float current_avg = human_yaw_avg / float(count_lock);
-                                    float diff = yaw - current_avg;
-                                    float gap_plus, gap_minus;
+                                    float diff = yaw - human_yaw0;
+//                                    float gap_plus, gap_minus;
+//                                    if (diff > PI) {
+//                                        gap_plus = PI - yaw;
+//                                        gap_minus = human_yaw0 + PI;
+//                                        if (gap_plus >= gap_minus) {
+//                                            human_yaw_avg += diff + 2*PI;
+//                                        }
+//                                        else {
+//                                            human_yaw_avg += diff - 2*PI;
+//                                        }
+//                                    }
+//                                    else if (diff <= -PI) {
+//                                        gap_plus = PI - human_yaw0;
+//                                        gap_minus = yaw + PI;
+//                                        if (gap_plus >= gap_minus) {
+//                                            human_yaw_avg += diff + 2*PI;
+//                                        }
+//                                        else {
+//                                            human_yaw_avg += diff - 2*PI;
+//                                        }
+//                                    }
+//                                    else {
+//                                        human_yaw_avg += diff;
+//                                    }
                                     if (diff > PI) {
-                                        gap_plus = PI - yaw;
-                                        gap_minus = current_avg + PI;
-                                        if (gap_plus >= gap_minus) {
-                                            human_yaw_avg += yaw + 2*PI;
-                                        }
-                                        else {
-                                            human_yaw_avg += yaw - 2*PI;
-                                        }
+                                        human_yaw_avg += diff - 2*PI;
                                     }
                                     else if (diff <= -PI) {
-                                        gap_plus = PI - current_avg;
-                                        gap_minus = yaw + PI;
-                                        if (gap_plus >= gap_minus) {
-                                            human_yaw_avg += yaw + 2*PI;
-                                        }
-                                        else {
-                                            human_yaw_avg += yaw - 2*PI;
-                                        }
+                                        human_yaw_avg += diff + 2*PI;
                                     }
                                     else {
-                                        human_yaw_avg += yaw;
+                                        human_yaw_avg += diff;
                                     }
                                 }
                                 count_lock++;
@@ -495,6 +545,7 @@ class BlimpController {
                                     // collected enough
                                     human_avg /= float(count_lock);
                                     human_yaw_avg /= float(count_lock);
+                                    human_yaw_avg += human_yaw0;
                                     while (human_yaw_avg <= -PI)
                                         human_yaw_avg += 2*PI;
                                     while (human_yaw_avg > PI)
@@ -514,7 +565,6 @@ class BlimpController {
                                     human_yaw_avg = 0.f;        // reset
                                     goal_locked = true;         // lock the goal
                                     count_lock = 0;             // reset counter
-                                    goal_changed = true;
                                     ROS_INFO("Goal set by human");
                                 }
                             }
@@ -638,11 +688,6 @@ class BlimpController {
                                     dist_y_pub.publish(dist_y_msg);
                                 }
                             }
-                            if (goal_changed) {
-                                goal_changed = false;
-                                ROS_INFO("goal_changed reset");
-                            }
-                            
                             break;
                         }
                                 
@@ -658,8 +703,93 @@ class BlimpController {
                             std_msgs::Float64 dist_y_msg;
                             dist_y_msg.data = error_blimp.y();
                             dist_y_pub.publish(dist_y_msg);
+
+                            double r_turn, p_turn, y_turn;
+                            tf::StampedTransform pinpoint_goal;
+                            listener.lookupTransform("pinpoint","goal", ros::Time(0), pinpoint_goal);
+                            if (fabs(pinpoint_goal.getOrigin().getY()) > 0.2) {     // Goal has changed, so pinpoint frame does not point directly to the goal
+                                if (inGoalVicinity(d_blimp)) {
+                                    y_turn = command_yaw - yaw_blimp;
+                                }
+                                else {
+                                    y_turn = atan2(d_blimp.y(), d_blimp.x());
+                                }
+                                float new_cmd = yaw_blimp + y_turn;
+                                if (new_cmd > PI)
+                                    new_cmd -= 2*PI;
+                                else if (new_cmd <= -PI)
+                                    new_cmd += 2*PI;
+                                if (fabsf(new_cmd - command_yaw) > PI/18. && fabsf(new_cmd - command_yaw) < 35.*PI/18.)  {    // difference of the command to the current situation (the blimp may drift and need to turn more/less to the goal)
+                                    // Set new command and send
+                                    command_yaw = new_cmd;
+                                    ROS_INFO("command_yaw changed to %f", command_yaw*180./PI);
+
+                                    // Set pinpoint
+                                    pinpoint_tf.setOrigin(blimp_world.getOrigin());
+                                    tf::Quaternion q_pin;
+                                    q_pin.setRPY(0.,0.,command_yaw);
+                                    pinpoint_tf.setRotation(q_pin);
+                                    br.sendTransform(tf::StampedTransform(pinpoint_tf, ros::Time::now(), "world", "pinpoint"));
+                                    //clearDrivePowers();
+
+                                    std_msgs::Int16 cmd;
+                                    cmd.data = round(-command_yaw*180./PI);
+                                    cmd_yaw_pub.publish(cmd);
+                                }
+                                else {
+                                    // Keep turning
+                                    if (fabs(yaw_blimp - command_yaw) <= PI/36.) {     // 5 degrees
+                                        // Good alignment
+                                        if (stoppedRotating()) {
+                                            // Already at low turning speed --> Stop
+                                            count_stop = 0;
+                                            state = 0;
+                                            ROS_INFO("%d", state);
+                                        }
+                                    }
+                                    else {
+                                        count_stop = 0;
+                                    }
+                                }
+                            }
+                            // Check if goal is changed only in rotation
+                            else if (fabs(tf::getYaw(pinpoint_goal.getRotation())) > PI/36. && inGoalVicinity(pinpoint_goal.getOrigin())) {
+                                float new_cmd = tf::getYaw(transform.getRotation());
+                                if (fabsf(new_cmd - command_yaw) > PI/18. && fabsf(new_cmd - command_yaw) < 35.*PI/18.)  {    // difference of the command to the current situation (the blimp may drift and need to turn more/less to the goal)
+                                    // Set new command and send
+                                    command_yaw = new_cmd;
+                                    ROS_INFO("command_yaw changed to %f", command_yaw*180./PI);
+
+                                    // Set pinpoint
+                                    pinpoint_tf.setOrigin(blimp_world.getOrigin());
+                                    tf::Quaternion q_pin;
+                                    q_pin.setRPY(0.,0.,command_yaw);
+                                    pinpoint_tf.setRotation(q_pin);
+                                    br.sendTransform(tf::StampedTransform(pinpoint_tf, ros::Time::now(), "world", "pinpoint"));
+                                    //clearDrivePowers();
+
+                                    std_msgs::Int16 cmd;
+                                    cmd.data = round(-command_yaw*180./PI);
+                                    cmd_yaw_pub.publish(cmd);
+                                }
+                                else {
+                                    // Keep turning
+                                    if (fabs(yaw_blimp - command_yaw) <= PI/36.) {     // 5 degrees
+                                        // Good alignment
+                                        if (stoppedRotating()) {
+                                            // Already at low turning speed --> Stop
+                                            count_stop = 0;
+                                            state = 0;
+                                            ROS_INFO("%d", state);
+                                        }
+                                    }
+                                    else {
+                                        count_stop = 0;
+                                    }
+                                }
+                            }
                             // Check transition condition
-                            if (fabs(yaw_blimp - command_yaw) <= PI/36.) {     // 5 degrees
+                            else if (fabs(yaw_blimp - command_yaw) <= PI/36.) {     // 5 degrees
                                 // Good alignment
                                 if (stoppedRotating()) {
                                     // Already at low turning speed --> Stop
@@ -670,8 +800,21 @@ class BlimpController {
                             }
                             else {
                                 count_stop = 0;
-                                double r_turn, p_turn, y_turn;
-                                if (goal_changed) {                         // Has someone changed the goal?
+                                if (inGoalVicinity(error_blimp)) {
+                                    tf::Matrix3x3 m2(b_pinpoint.getRotation());
+                                    m2.getRPY(r_turn, p_turn, y_turn);
+                                }
+                                else {
+                                    ROS_INFO("Out of the vicinity");
+                                    if (inGoalVicinity(d_blimp)) {
+                                        y_turn = command_yaw - yaw_blimp;
+                                    }
+                                    else {
+                                        y_turn = atan2(d_blimp.y(), d_blimp.x());
+                                    }
+                                }
+
+                                /*if (goal_changed) {                         // Has someone changed the goal?
                                     if (inGoalVicinity(d_blimp)) {
                                         y_turn = command_yaw - yaw_blimp;
                                     }
@@ -693,7 +836,7 @@ class BlimpController {
                                     else {
                                         y_turn = atan2(d_blimp.y(), d_blimp.x());
                                     }
-                                }
+                                }*/
 
                                 float new_cmd = yaw_blimp + y_turn;
                                 if (new_cmd > PI)
@@ -753,6 +896,8 @@ class BlimpController {
                                 if (fabs(d_blimp.y()) > 0.2) {     // If going direct --> > 20 cm lateral error --> need angle adjustment --> turn
                                     double y_turn = atan2(d_blimp.y(), d_blimp.x());
                                     float new_cmd = yaw_blimp + y_turn;
+                                    //if (d_blimp.x() < 0. && d_blimp.x() > -1.)
+                                    //    new_cmd += PI;              // If the goal is behind, and less than 1 m away, just go backward, no need to make full turn
                                     if (new_cmd > PI)
                                         new_cmd -= 2*PI;
                                     else if (new_cmd <= -PI)
@@ -797,10 +942,6 @@ class BlimpController {
                                     dist_msg.data = d_blimp.x();
                                     dist_pub.publish(dist_msg);
                                 }
-                            }
-                            if (goal_changed) {
-                                goal_changed = false;
-                                ROS_INFO("goal_changed reset");
                             }
                             break;
                         }

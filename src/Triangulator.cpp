@@ -748,8 +748,8 @@ void Triangulator::triangulateHumanCallback(const PolygonStampedConstPtr& heads_
                                         else
                                             d_v = direction_v;
 
-                                        std::cout << prob_v_old << " x " << human_direction << " + " << prob_old_v << " x " << d_v
-                                                << " + " << prob_left << " x " << d_l << " + " << prob_right << " x " << d_r << std::endl;
+                                        //std::cout << prob_v_old << " x " << human_direction << " + " << prob_old_v << " x " << d_v
+                                        //        << " + " << prob_left << " x " << d_l << " + " << prob_right << " x " << d_r << std::endl;
                                         human_direction = (int) round( (prob_v_old*human_direction + prob_old_v*d_v + prob_left*d_l + prob_right*d_r) / (prob_v_old + prob_old_v + prob_left + prob_right) );
 
                                         //direction_new = (prob_left*d_l + prob_right*d_r) / (prob_left + prob_right);

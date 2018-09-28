@@ -3,7 +3,7 @@
     <group ns="blimp">
         <include file="$(find gscam)/launch/cam_gs.launch">
             <arg name="VIEW" value="false"/>
-            <arg name="RECT" value="false"/>
+            <arg name="RECT" value="true"/>
         </include>
         
         <include file="$(find gpu_opencv)/launch/faces.launch">
@@ -11,57 +11,63 @@
         </include>
         
         <node name="pid_ux_v" pkg="pid" type="controller">
-            <param name="Kp" value="0.8" />
+            <param name="Kp" value="-50.0" />
             <param name="Ki" value="0.0" />
-            <param name="Kd" value="2.4" />
-            <param name="upper_limit"  value="64.0" />
-            <param name="lower_limit"  value="-64.0" />
-            <param name="windup_limit" value="64.0" />
+            <param name="Kd" value="-200.0" />
+            <param name="upper_limit"  value="32.0" />
+            <param name="lower_limit"  value="-32.0" />
+            <param name="windup_limit" value="32.0" />
             <param name="min_loop_frequency" value="15.0" />
             <param name="max_loop_frequency" value="30.0" />
             <param name="topic_from_controller" value="u_x" />
             <param name="topic_from_plant" value="err_size" />
+            <param name="cutoff_frequency" value="1" />
             <remap from="setpoint" to="/setpoint_size" />
             <param name="pid_enable_topic" value="vis_serv_enable" />
             <param name="reset_pid_topic" value="vis_serv_reset" />
         </node>
         <node name="pid_uy_v" pkg="pid" type="controller">
-            <param name="Kp" value="32.0" />
+            <param name="Kp" value="24.0" />
             <param name="Ki" value="0.0" />
-            <param name="Kd" value="24.0" />
-            <param name="upper_limit"  value="64.0" />
-            <param name="lower_limit"  value="-64.0" />
-            <param name="windup_limit" value="64.0" />
+            <param name="Kd" value="20.0" />
+            <param name="upper_limit"  value="40.0" />
+            <param name="lower_limit"  value="-40.0" />
+            <param name="windup_limit" value="40.0" />
             <param name="min_loop_frequency" value="15.0" />
             <param name="max_loop_frequency" value="30.0" />
             <param name="topic_from_controller" value="u_y" />
             <param name="topic_from_plant" value="left_right" />
+            <param name="cutoff_frequency" value="2" />
             <remap from="setpoint" to="/setpoint_side" />
             <param name="pid_enable_topic" value="vis_serv_enable" />
             <param name="reset_pid_topic" value="vis_serv_reset" />
         </node>
         <node name="pid_uz_v" pkg="pid" type="controller">
-            <param name="Kp" value="-0.3" />
-            <param name="Ki" value="-0.1" />
-            <param name="Kd" value="-0.8" />
-            <param name="upper_limit"  value="128.0" />
-            <param name="lower_limit"  value="-128.0" />
-            <param name="windup_limit" value="128.0" />
+            <param name="Kp" value="-0.5" />
+            <param name="Ki" value="-0.3" />
+            <param name="Kd" value="-1.2" />
+            <param name="upper_limit"  value="40.0" />
+            <param name="lower_limit"  value="-40.0" />
+            <param name="windup_limit" value="40.0" />
             <param name="min_loop_frequency" value="15.0" />
             <param name="max_loop_frequency" value="30.0" />
             <param name="topic_from_controller" value="u_z" />
             <param name="topic_from_plant" value="err_y" />
+            <param name="cutoff_frequency" value="1" />
             <remap from="setpoint" to="/setpoint_z" />
             <param name="pid_enable_topic" value="vis_serv_enable" />
             <param name="reset_pid_topic" value="vis_serv_reset" />
         </node>
         
-        <node pkg="blimp_navigation" type="visual_servo_node" name="VSNode" output="screen" />
+        <node pkg="blimp_navigation" type="visual_servo_node" name="VSNode" output="screen" >
+            <param name="filename" command="date +'$(find blimp_navigation)/log/%m%d_%H%M-visualservo_$(arg save_name).csv'"/>
+        </node>
         
         <!--<node name="ble_blimp" pkg="ble_joy_controller" type="ble_pid_node.py" output="screen">
             <param name="save_name" value="tuning" />
         </node>-->
         <node name="video_save" pkg="image_view" type="video_recorder">
+            <!--param name="filename" command="date +'/media/veerachart/9d733e45-9e20-409c-b060-ad91b18aec60/Experiments/%m%d_%H%M-Onboard_$(arg save_name).avi'"/-->
             <param name="filename" command="date +'/media/veerachart/Seagate Backup Plus Drive/Onboard_camera/%m%d_%H%M-Onboard_$(arg save_name).avi'"/>
             <param name="fps" value="25" />
             <param name="codec" value="MJPG" />
@@ -69,6 +75,7 @@
         </node>
         
         <node name="raw_save" pkg="image_view" type="video_recorder">
+            <!--param name="filename" command="date +'/media/veerachart/9d733e45-9e20-409c-b060-ad91b18aec60/Experiments/%m%d_%H%M-Onboard_raw_$(arg save_name).avi'"/-->
             <param name="filename" command="date +'/media/veerachart/Seagate Backup Plus Drive/Onboard_camera/%m%d_%H%M-Onboard_raw_$(arg save_name).avi'"/>
             <param name="fps" value="25" />
             <param name="codec" value="MJPG" />
@@ -77,7 +84,7 @@
         
     </group>
     
-    <node pkg="rostopic" type="rostopic" name="set_size" args="pub /setpoint_size std_msgs/Float64 60.0" />
+    <node pkg="rostopic" type="rostopic" name="set_size" args="pub /setpoint_size std_msgs/Float64 1.0" />
     <node pkg="rostopic" type="rostopic" name="set_side" args="pub /setpoint_side std_msgs/Float64 0.0" />
     <!--<node pkg="rostopic" type="rostopic" name="set_z" args="pub /setpoint_z std_msgs/Float64 0.0" />
     <node name="dynamic_reconfigure" pkg="rqt_reconfigure" type="rqt_reconfigure"> </node>-->

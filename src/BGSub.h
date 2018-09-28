@@ -54,7 +54,7 @@ protected:
     int dilation_size;
     
     VideoWriter outputVideo;
-    VideoWriter ColorVideo, BGVideo, FGVideo, FGHumanVideo, ObjVideo, DetectedVideo;
+    //VideoWriter ColorVideo, BGVideo, FGVideo, FGHumanVideo, ObjVideo, DetectedVideo;
     bool save_video;
     
     // Fisheye HOG

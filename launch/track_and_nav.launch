@@ -6,13 +6,13 @@
         </node>
         <node name="pid_ux_f" pkg="pid" type="controller">
             <!--param name="Kp" value="-80.0" /-->
-            <param name="Kp" value="-35.0" />
+            <param name="Kp" value="-40.0" />
             <param name="Ki" value="-0.0" />
             <!--param name="Kd" value="-500.0" /-->
             <param name="Kd" value="-250.0" />
-            <param name="upper_limit"  value="64.0" />
-            <param name="lower_limit"  value="-64.0" />
-            <param name="windup_limit" value="64.0" />
+            <param name="upper_limit"  value="40.0" />
+            <param name="lower_limit"  value="-40.0" />
+            <param name="windup_limit" value="40.0" />
             <param name="min_loop_frequency" value="8.0" />
             <param name="max_loop_frequency" value="12.0" />
             <param name="topic_from_controller" value="u_x" />
@@ -23,12 +23,12 @@
             <param name="reset_pid_topic" value="stereo_reset" />
         </node>
         <node name="pid_uy_f" pkg="pid" type="controller">
-            <param name="Kp" value="-80.0" />
+            <param name="Kp" value="-120.0" />
             <param name="Ki" value="-0.0" />
             <param name="Kd" value="-100.0" />
-            <param name="upper_limit"  value="96.0" />
-            <param name="lower_limit"  value="-96.0" />
-            <param name="windup_limit" value="96.0" />
+            <param name="upper_limit"  value="40.0" />
+            <param name="lower_limit"  value="-40.0" />
+            <param name="windup_limit" value="40.0" />
             <param name="min_loop_frequency" value="8.0" />
             <param name="max_loop_frequency" value="12.0" />
             <param name="topic_from_controller" value="u_y" />
@@ -40,13 +40,13 @@
         </node>
         <node name="pid_uz_f" pkg="pid" type="controller" output="screen">
             <!--param name="Kp" value="-100.0" /--> <!-- Tuned, hopefully -->
-            <param name="Kp" value="-60.0" />
+            <param name="Kp" value="-50.0" />
             <param name="Ki" value="-10.0" />
             <!--param name="Kd" value="-1500.0" /-->
-            <param name="Kd" value="-400.0" />
-            <param name="upper_limit"  value="128.0" />
-            <param name="lower_limit"  value="-128.0" />
-            <param name="windup_limit" value="128.0" />
+            <param name="Kd" value="-450.0" />
+            <param name="upper_limit"  value="64.0" />
+            <param name="lower_limit"  value="-64.0" />
+            <param name="windup_limit" value="64.0" />
             <param name="min_loop_frequency" value="8.0" />
             <param name="max_loop_frequency" value="12.0" />
             <param name="topic_from_controller" value="u_z" />

@@ -158,6 +158,8 @@ add_executable(blimp_controller_node src/BlimpController.cpp)
 
 add_executable(visual_servo_node src/visual_servo.cpp)
 
+add_executable(debug_controller_node src/debug_controller.cpp)
+
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -195,6 +197,10 @@ target_link_libraries(blimp_controller_node
 )
 
 target_link_libraries(visual_servo_node
+  ${catkin_LIBRARIES}
+)
+
+target_link_libraries(debug_controller_node
   ${catkin_LIBRARIES}
 )
 
